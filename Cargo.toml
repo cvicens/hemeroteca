@@ -1,0 +1,11 @@
+[package]
+name = "hemeroteca"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.3", features = ["derive"] }
+rand = "0.8.5"
+reqwest = "0.11.27"
+rss = "2.0.7"
+tokio = { version = "1.36.0", features = ["full"] }

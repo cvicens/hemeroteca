@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+  <channel>
+    <title><![CDATA[Title 1]]></title>
+    <link><![CDATA[https://www.acme.es/section/uri-to-item.html]]></link>
+    <description><![CDATA[Description]]></description>
+    <language><![CDATA[es]]></language>
+    <copyright><![CDATA[Copyright acme.es]]></copyright>
+    <ttl>10</ttl>
+    <image>
+      <url><![CDATA[https://www.acme.es/assets/img/logos/acme-default.h-3190b80928a7e6cf79571e28cef7bdca.png]]></url>
+      <title><![CDATA[acme.es - acme.es]]></title>
+      <link><![CDATA[/]]></link>
+    </image>
+    <atom:link href="https://www.acme.es/rss/" rel="self" type="application/rss+xml"/>
+    <item>
+      <title><![CDATA[Title 1]]></title>
+      <link><![CDATA[https://www.acme.es/section/uri-to-item.html]]></link>
+      <description><![CDATA[Description]]></description>
+      <dc:creator><![CDATA[Journalist1]]></dc:creator>
+      <guid isPermaLink="true"><![CDATA[https://www.acme.es/section/uri-to-item.html]]></guid>
+      <pubDate><![CDATA[Thu, 21 Mar 2024 18:32:48 +0000]]></pubDate>
+      <enclosure url="https://static.acme.es/clip/clip1.jpg" length="3363475" type="image/jpeg"/>
+      <media:content url="https://static.acme.es/clip/clip1.jpg" type="image/jpeg" fileSize="3363475" width="1200" height="675"/>
+      <media:title><![CDATA[Title 1]]></media:title>
+      <media:thumbnail url="https://static.acme.es/clip/clip1.jpg" width="1200" height="675"/>
+      <media:keywords><![CDATA[Keyword 1, Keyword 2]]></media:keywords>
+      <category>Category 1</category>
+      <category>Category 2</category>
+    </item>
+  </channel>
+</rss>

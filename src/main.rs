@@ -13,7 +13,7 @@ struct Args {
     file: String,
 
     /// Threads used to parse the feeds
-    #[arg(short, long, default_value = "2")]
+    #[arg(short, long, default_value = "4")]
     threads: u8,
 
     /// List of categories to filter out
@@ -80,8 +80,26 @@ async fn main() {
     // Shuffle the items
     items.shuffle(&mut rand::thread_rng());
 
-    // Print the title of the feeds
-    for item in items {
-        println!("t: {:?}", item.title);
+    // Print 1 items
+    for item in items.iter().take(1) {
+        println!("Item >>: {:?}", item);
+        // println!("Title: {}", item.title);
+        // println!("Link: {}", item.link);
+        // println!("Description: {}", item.description);
+        // println!("Categories: {:?}", item.categories);
+        println!();
+    }
+    
+    // Convert the items to NewsItems
+    let items: Vec<_> = items.iter().map(|item| hemeroteca::NewsItem::from_item(item).unwrap()).collect();
+
+    // Print 1 items
+    for item in items.iter().take(1) {
+        println!("NewsItem >>: {:?}", item);
+        // println!("Title: {}", item.title);
+        // println!("Link: {}", item.link);
+        // println!("Description: {}", item.description);
+        // println!("Categories: {:?}", item.categories);
+        println!();
     }
 }

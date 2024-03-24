@@ -36,7 +36,6 @@ impl NewsItem {
             .collect::<Vec<String>>()
             .join(",");
         let extensions = item.extensions().clone();
-        println!(">>> Extensions: {:?}", extensions);
         let keywords = extensions.get("media").and_then(|ext| {
             ext.get("keywords").and_then(|extensions| {
                 extensions
@@ -170,6 +169,34 @@ mod tests {
         assert_eq!(news_item.description, "Description");
         assert_eq!(news_item.categories, "Category 1,Category 2");
         assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_string()));
+    }
+
+    // This test chacks that an Item without the media:keywords extension is correctly converted to a NewsItem
+    #[test]
+    fn test_from_item_no_keywords() {
+        // Create a couple of test categories
+        let category1 = CategoryBuilder::default().name("Category 1").build();
+        let category2 = CategoryBuilder::default().name("Category 2").build();
+
+        // Create a test Item with title, link, description and categories
+        let item = rss::ItemBuilder::default()
+            .title(Some("Title 1".to_string()))
+            .link(Some(
+                "https://www.acme.es/section/uri-to-item.html".to_string(),
+            ))
+            .description(Some("Description".to_string()))
+            .categories(vec![category1.clone(), category2.clone()])
+            .build();
+
+        let news_item = NewsItem::from_item(&item).unwrap();
+        assert_eq!(news_item.title, "Title 1");
+        assert_eq!(
+            news_item.link,
+            "https://www.acme.es/section/uri-to-item.html"
+        );
+        assert_eq!(news_item.description, "Description");
+        assert_eq!(news_item.categories, "Category 1,Category 2");
+        assert_eq!(news_item.keywords, None);
     }
 
     // Test that the from_item function works for a test file

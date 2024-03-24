@@ -1,8 +1,8 @@
 use hemeroteca::{read_feed, read_urls};
 
 use clap::Parser;
-use rss::Item;
 use rand::seq::SliceRandom;
+use rss::Item;
 
 // CLAP Arguments Parsing
 #[derive(Parser, Debug)]
@@ -57,11 +57,20 @@ async fn main() {
             let categories_clone = categories.clone(); // Clone categories
             let handle = tokio::spawn(async move {
                 let channel = read_feed(&url).await.unwrap();
-                
+
                 // Return those items that do not have any of the categories to filter out
-                let items: Vec<Item> = channel.items().iter().filter(|item| {
-                    !categories_clone.iter().any(|category| item.categories().iter().any(|cat| cat.name().eq_ignore_ascii_case(category)))
-                }).cloned().collect(); // Clone the items before collecting them
+                let items: Vec<Item> = channel
+                    .items()
+                    .iter()
+                    .filter(|item| {
+                        !categories_clone.iter().any(|category| {
+                            item.categories()
+                                .iter()
+                                .any(|cat| cat.name().eq_ignore_ascii_case(category))
+                        })
+                    })
+                    .cloned()
+                    .collect(); // Clone the items before collecting them
                 println!("> Read {} items from {}", items.len(), url);
                 items
             });
@@ -89,9 +98,12 @@ async fn main() {
         // println!("Categories: {:?}", item.categories);
         println!();
     }
-    
+
     // Convert the items to NewsItems
-    let items: Vec<_> = items.iter().map(|item| hemeroteca::NewsItem::from_item(item).unwrap()).collect();
+    let items: Vec<_> = items
+        .iter()
+        .map(|item| hemeroteca::NewsItem::from_item(item).unwrap())
+        .collect();
 
     // Print 1 items
     for item in items.iter().take(1) {

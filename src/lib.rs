@@ -1,4 +1,4 @@
-///! Library that provides functions to read and parse RSS feeds
+//! Library that provides functions to read and parse RSS feeds
 use std::{error::Error, io::BufRead};
 
 use rss::Channel;
@@ -15,12 +15,12 @@ pub struct NewsItem {
 
 impl NewsItem {
     /// Function that creates a NewsItem from an RSS Item and returns a Result or Error
-    /// 
+    ///
     /// Example:
     /// ```
     /// use rss::Item;
     /// use hemeroteca::NewsItem;
-    /// 
+    ///
     /// let item = Item::default();
     /// let news_item = NewsItem::from_item(&item);
     /// assert_eq!(news_item.is_err(), true);
@@ -49,20 +49,19 @@ impl NewsItem {
                         }
                     })
                     .collect::<Option<Vec<String>>>()
-            })
+            }).map(|keywords| keywords.join(","))
         });
-        let keywords = keywords.and_then(|keywords| Some(keywords.join(", ")));
         Ok(NewsItem {
             title,
             link,
             description,
             categories,
-            keywords: keywords,
+            keywords,
         })
     }
 }
 
-///! Function that reads a feed from a URL
+/// Function that reads a feed from a URL
 pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
     let content = reqwest::get(feed_url).await?.bytes().await?;
     let channel = Channel::read_from(&content[..])?;
@@ -89,9 +88,9 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeMap, io::Write};
-    use rss::CategoryBuilder;
     use rss::extension::{ExtensionBuilder, ExtensionMap};
+    use rss::CategoryBuilder;
+    use std::{collections::BTreeMap, io::Write};
 
     ///! Function that reads a feed from a file
     fn read_feed_from_file(file: &str) -> Result<Channel, Box<dyn Error>> {
@@ -144,7 +143,9 @@ mod tests {
         // Create a test Item with title, link, description and categories
         let item = rss::ItemBuilder::default()
             .title(Some("Title 1".to_string()))
-            .link(Some("https://www.acme.es/section/uri-to-item.html".to_string()))
+            .link(Some(
+                "https://www.acme.es/section/uri-to-item.html".to_string(),
+            ))
             .description(Some("Description".to_string()))
             .categories(vec![category1.clone(), category2.clone()])
             .extensions(extensions)
@@ -162,7 +163,10 @@ mod tests {
 
         let news_item = NewsItem::from_item(&item).unwrap();
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
+        assert_eq!(
+            news_item.link,
+            "https://www.acme.es/section/uri-to-item.html"
+        );
         assert_eq!(news_item.description, "Description");
         assert_eq!(news_item.categories, "Category 1,Category 2");
         assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_string()));
@@ -187,7 +191,10 @@ mod tests {
         println!("NewsItem: {:?}", news_item);
 
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
+        assert_eq!(
+            news_item.link,
+            "https://www.acme.es/section/uri-to-item.html"
+        );
         assert_eq!(news_item.description, "Description");
         assert_eq!(news_item.categories, "Category 1,Category 2");
         assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_string()));

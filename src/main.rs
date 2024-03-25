@@ -16,9 +16,9 @@ struct Args {
     #[arg(short, long, default_value = "4")]
     threads: u8,
 
-    /// List of categories to filter out
+    /// List of categories or keywords to filter out
     #[arg(short, long)]
-    categories: Vec<String>,
+    opt_in: Vec<String>,
 }
 
 #[tokio::main]
@@ -32,8 +32,9 @@ async fn main() {
     // Get the number of threads
     let max_threads = args.threads;
 
-    // Get the categories to filter out
-    let categories = args.categories;
+    // Get the categories to filter out in lowercase
+    let opt_in = args.opt_in.into_iter().map(|s| s.to_lowercase()).collect::<Vec<String>>();
+    println!("Filtering out: {:?}", opt_in);
 
     // Read the feed urls from the file
     let mut urls = read_urls(&file).unwrap();
@@ -54,7 +55,6 @@ async fn main() {
         let mut handles = vec![];
         for _ in 0..threads {
             let url = urls.pop().unwrap();
-            let categories_clone = categories.clone(); // Clone categories
             let handle = tokio::spawn(async move {
                 let channel = read_feed(&url).await.unwrap();
 
@@ -62,15 +62,8 @@ async fn main() {
                 let items: Vec<Item> = channel
                     .items()
                     .iter()
-                    .filter(|item| {
-                        !categories_clone.iter().any(|category| {
-                            item.categories()
-                                .iter()
-                                .any(|cat| cat.name().eq_ignore_ascii_case(category))
-                        })
-                    })
-                    .cloned()
-                    .collect(); // Clone the items before collecting them
+                    .cloned() // Clone the items before collecting them
+                    .collect();
                 println!("> Read {} items from {}", items.len(), url);
                 items
             });
@@ -85,33 +78,32 @@ async fn main() {
 
     // Flatten the items vectors
     let mut items: Vec<Item> = items.into_iter().flatten().collect();
-
+    
     // Shuffle the items
     items.shuffle(&mut rand::thread_rng());
 
-    // Print 1 items
-    for item in items.iter().take(1) {
-        println!("Item >>: {:?}", item);
-        // println!("Title: {}", item.title);
-        // println!("Link: {}", item.link);
-        // println!("Description: {}", item.description);
-        // println!("Categories: {:?}", item.categories);
-        println!();
-    }
-
     // Convert the items to NewsItems
-    let items: Vec<_> = items
+    let mut items: Vec<_> = items
         .iter()
         .map(|item| hemeroteca::NewsItem::from_item(item).unwrap())
         .collect();
 
+    // Filter out the items that have any of the categories or keywords equal to the categories to filter out
+    items.retain(|item| {
+        let categories = item.categories.clone().unwrap_or("".to_string());
+        let keywords = item.keywords.clone().unwrap_or("".to_string());
+        println!("Checking {:?} in {:?} and {:?}", opt_in, categories, keywords);
+        opt_in.iter().any(|item| {
+            categories.contains(item) || keywords.contains(item)
+        })
+    });
+
+    // How many items are left
+    println!("Matched {} items", items.len());
+
     // Print 1 items
     for item in items.iter().take(1) {
         println!("NewsItem >>: {:?}", item);
-        // println!("Title: {}", item.title);
-        // println!("Link: {}", item.link);
-        // println!("Description: {}", item.description);
-        // println!("Categories: {:?}", item.categories);
         println!();
     }
 }

@@ -9,7 +9,7 @@ pub struct NewsItem {
     pub title: String,
     pub link: String,
     pub description: String,
-    pub categories: String,
+    pub categories: Option<String>,
     pub keywords: Option<String>,
 }
 
@@ -32,9 +32,13 @@ impl NewsItem {
         let categories = item
             .categories()
             .iter()
-            .map(|category| category.name().to_string())
-            .collect::<Vec<String>>()
-            .join(",");
+            .map(|category| category.name().to_string().to_lowercase())
+            .collect::<Vec<String>>();
+        let categories = if categories.is_empty() {
+            None
+        } else {
+            Some(categories.join(","))
+        };
         let extensions = item.extensions().clone();
         let keywords = extensions.get("media").and_then(|ext| {
             ext.get("keywords").and_then(|extensions| {
@@ -42,7 +46,7 @@ impl NewsItem {
                     .iter()
                     .map(|ext| {
                         if ext.name == "media:keywords" && ext.value.is_some() {
-                            Some(ext.value().unwrap().to_string())
+                            Some(ext.value().unwrap().to_string().to_lowercase())
                         } else {
                             None
                         }
@@ -167,11 +171,11 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, "Category 1,Category 2");
+        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
         assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_string()));
     }
 
-    // This test chacks that an Item without the media:keywords extension is correctly converted to a NewsItem
+    // This test checks that an Item without the media:keywords extension is correctly converted to a NewsItem
     #[test]
     fn test_from_item_no_keywords() {
         // Create a couple of test categories
@@ -195,8 +199,41 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, "Category 1,Category 2");
+        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
         assert_eq!(news_item.keywords, None);
+    }
+
+    // This test checks that an Item without the categories is correctly converted to a NewsItem
+    #[test]
+    fn test_from_item_no_categories() {
+        // Create a test Item with title, link, description and categories
+        let item = rss::ItemBuilder::default()
+            .title(Some("Title 1".to_string()))
+            .link(Some(
+                "https://www.acme.es/section/uri-to-item.html".to_string(),
+            ))
+            .description(Some("Description".to_string()))
+            .build();
+
+        let news_item = NewsItem::from_item(&item).unwrap();
+        assert_eq!(news_item.title, "Title 1");
+        assert_eq!(
+            news_item.link,
+            "https://www.acme.es/section/uri-to-item.html"
+        );
+        assert_eq!(news_item.description, "Description");
+        assert_eq!(news_item.categories, None);
+        assert_eq!(news_item.keywords, None);
+    }
+
+    // This test checks that an Item without title, link or description fails to convert to a NewsItem
+    #[test]
+    fn test_from_item_no_title_link_description() {
+        // Create a test Item with title, link, description and categories
+        let item = rss::ItemBuilder::default().build();
+
+        let news_item = NewsItem::from_item(&item);
+        assert_eq!(news_item.is_err(), true);
     }
 
     // Test that the from_item function works for a test file
@@ -223,7 +260,7 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, "Category 1,Category 2");
+        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
         assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_string()));
     }
 }

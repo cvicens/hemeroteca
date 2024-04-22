@@ -1,6 +1,7 @@
 //! Library that provides functions to read and parse RSS feeds
 use std::{error::Error, io::BufRead};
 
+use regex::Regex;
 use rss::Channel;
 
 /// Struct that represents a News Item
@@ -41,18 +42,20 @@ impl NewsItem {
         };
         let extensions = item.extensions().clone();
         let keywords = extensions.get("media").and_then(|ext| {
-            ext.get("keywords").and_then(|extensions| {
-                extensions
-                    .iter()
-                    .map(|ext| {
-                        if ext.name == "media:keywords" && ext.value.is_some() {
-                            Some(ext.value().unwrap().to_string().to_lowercase())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Option<Vec<String>>>()
-            }).map(|keywords| keywords.join(","))
+            ext.get("keywords")
+                .and_then(|extensions| {
+                    extensions
+                        .iter()
+                        .map(|ext| {
+                            if ext.name == "media:keywords" && ext.value.is_some() {
+                                Some(ext.value().unwrap().to_string().to_lowercase())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Option<Vec<String>>>()
+                })
+                .map(|keywords| keywords.join(","))
         });
         Ok(NewsItem {
             title,
@@ -84,13 +87,34 @@ pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
 pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
     let file = std::fs::File::open(file)?;
     let reader = std::io::BufReader::new(file);
-    let urls: Vec<String> = reader.lines().map(|line| line.unwrap()).collect();
+
+    let url_regex = Regex::new(r#"(http|https)://[^\s/$.?#].[^\s]*"#)?;
+
+    let urls: Vec<String> = reader
+        .lines()
+        .filter_map(|line| match line {
+            Ok(line) => {
+                if !line.is_empty() && !line.starts_with('#') && url_regex.is_match(&line) {
+                    log::trace!("Accepting line: {}", line);
+                    Some(line)
+                } else {
+                    log::warn!("Ignoring line: {}", line);
+                    None
+                }
+            }
+            Err(err) => {
+                log::error!("Error reading line: {:?}", err);
+                None
+            }
+        })
+        .collect();
     Ok(urls)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use regex::Regex;
     use rss::extension::{ExtensionBuilder, ExtensionMap};
     use rss::CategoryBuilder;
     use std::{collections::BTreeMap, io::Write};
@@ -162,7 +186,7 @@ mod tests {
             .items(vec![item.clone()])
             .build();
 
-        println!("Channel: {:?}", channel.to_string());
+        log::trace!("Channel: {:?}", channel.to_string());
 
         let news_item = NewsItem::from_item(&item).unwrap();
         assert_eq!(news_item.title, "Title 1");
@@ -171,7 +195,10 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
+        assert_eq!(
+            news_item.categories,
+            Some("Category 1,Category 2".to_string())
+        );
         assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_string()));
     }
 
@@ -199,7 +226,10 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
+        assert_eq!(
+            news_item.categories,
+            Some("Category 1,Category 2".to_string())
+        );
         assert_eq!(news_item.keywords, None);
     }
 
@@ -247,12 +277,12 @@ mod tests {
         // There have to be 1 item
         assert_eq!(items.len(), 1);
 
-        println!("Item: {:?}", &items[0]);
+        log::trace!("Item: {:?}", &items[0]);
 
         // Convert the item to news item
         let news_item = NewsItem::from_item(&items[0]).unwrap();
 
-        println!("NewsItem: {:?}", news_item);
+        log::trace!("NewsItem: {:?}", news_item);
 
         assert_eq!(news_item.title, "Title 1");
         assert_eq!(
@@ -260,7 +290,10 @@ mod tests {
             "https://www.acme.es/section/uri-to-item.html"
         );
         assert_eq!(news_item.description, "Description");
-        assert_eq!(news_item.categories, Some("Category 1,Category 2".to_string()));
+        assert_eq!(
+            news_item.categories,
+            Some("Category 1,Category 2".to_string())
+        );
         assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_string()));
     }
 }

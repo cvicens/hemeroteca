@@ -1,8 +1,9 @@
 //! Library that provides functions to read and parse RSS feeds
 use std::{error::Error, io::BufRead};
 
+use rand::seq::SliceRandom;
 use regex::Regex;
-use rss::Channel;
+use rss::{Channel, Item};
 
 /// Struct that represents a News Item
 #[derive(Debug)]
@@ -111,10 +112,91 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
     Ok(urls)
 }
 
+/// Function that given a vector or feed urls and using read_feed get all the Items per Channel
+/// and returns them in an optional vector
+pub async fn get_all_items(
+    feed_urls: &mut Vec<String>,
+    max_threads: u8,
+    opt_in: Vec<String>,
+) -> Option<Vec<NewsItem>> {
+    let mut items = Vec::new();
+    // While there are urls to read
+    while !feed_urls.is_empty() {
+        // Calculate the number of threads to spawn
+        let threads = std::cmp::min(max_threads as usize, feed_urls.len());
+
+        // Spawn as many thread as the minimum of max number of threads and the number of urls and get the handles
+        log::trace!("Spawning {} threads", threads);
+        let mut handles = vec![];
+        for _ in 0..threads {
+            let url = feed_urls.pop().unwrap();
+            let handle = tokio::spawn(async move {
+                let channel = read_feed(&url).await;
+                if channel.is_err() {
+                    log::error!(
+                        "Could not read the feed from {}. ERROR: {}",
+                        url,
+                        channel.err().unwrap()
+                    );
+                    vec![]
+                } else {
+                    let channel = channel.unwrap();
+                    // Return those items that do not have any of the categories to filter out
+                    let items: Vec<Item> = channel
+                        .items()
+                        .iter()
+                        .cloned() // Clone the items before collecting them
+                        .collect();
+                    log::trace!("> Read {} items from {}", items.len(), url);
+                    items
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all the threads to finish
+        for handle in handles {
+            items.push(handle.await.unwrap());
+        }
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        // Flatten the items vectors
+        let mut items: Vec<Item> = items.into_iter().flatten().collect();
+
+        // Shuffle the items
+        items.shuffle(&mut rand::thread_rng());
+
+        // Convert the items to NewsItems
+        let mut items: Vec<_> = items
+            .iter()
+            .map(|item| NewsItem::from_item(item).unwrap())
+            .collect();
+
+        // Filter out the items that have any of the categories or keywords equal to the categories to filter out
+        items.retain(|item| {
+            let categories = item.categories.clone().unwrap_or("".to_string());
+            let keywords = item.keywords.clone().unwrap_or("".to_string());
+            log::trace!(
+                "Checking {:?} in {:?} and {:?}",
+                opt_in,
+                categories,
+                keywords
+            );
+            opt_in
+                .iter()
+                .any(|item| categories.contains(item) || keywords.contains(item))
+        });
+        Some(items)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
+    // use regex::Regex;
     use rss::extension::{ExtensionBuilder, ExtensionMap};
     use rss::CategoryBuilder;
     use std::{collections::BTreeMap, io::Write};
@@ -199,7 +281,10 @@ mod tests {
             news_item.categories,
             Some("Category 1,Category 2".to_lowercase().to_string())
         );
-        assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_lowercase().to_string()));
+        assert_eq!(
+            news_item.keywords,
+            Some("Keyword 1,Keyword 2".to_lowercase().to_string())
+        );
     }
 
     // This test checks that an Item without the media:keywords extension is correctly converted to a NewsItem
@@ -294,6 +379,9 @@ mod tests {
             news_item.categories,
             Some("Category 1,Category 2".to_lowercase().to_string())
         );
-        assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_lowercase().to_string()));
+        assert_eq!(
+            news_item.keywords,
+            Some("Keyword 1, Keyword 2".to_lowercase().to_string())
+        );
     }
 }

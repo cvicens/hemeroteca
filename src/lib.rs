@@ -197,9 +197,9 @@ mod tests {
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,
-            Some("Category 1,Category 2".to_string())
+            Some("Category 1,Category 2".to_lowercase().to_string())
         );
-        assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_string()));
+        assert_eq!(news_item.keywords, Some("Keyword 1,Keyword 2".to_lowercase().to_string()));
     }
 
     // This test checks that an Item without the media:keywords extension is correctly converted to a NewsItem
@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,
-            Some("Category 1,Category 2".to_string())
+            Some("Category 1,Category 2".to_lowercase().to_string())
         );
         assert_eq!(news_item.keywords, None);
     }
@@ -292,8 +292,8 @@ mod tests {
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,
-            Some("Category 1,Category 2".to_string())
+            Some("Category 1,Category 2".to_lowercase().to_string())
         );
-        assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_string()));
+        assert_eq!(news_item.keywords, Some("Keyword 1, Keyword 2".to_lowercase().to_string()));
     }
 }

@@ -1,4 +1,4 @@
-use hemeroteca::{get_all_items, read_urls};
+use hemeroteca::{get_all_contents, get_all_items, read_urls, NewsItem};
 
 use clap::Parser;
 
@@ -57,15 +57,22 @@ async fn main() {
     let items = get_all_items(&mut feed_urls, max_threads, opt_in).await;
 
     if let Some(items) = items {
-        // How many items are left
-        log::debug!("Matched {} items", items.len());
+        // Get the first 5 news items
+        let first_five_items = items.iter().take(5).cloned().collect();
 
-        // Print 1 items
-        for item in items.iter().take(1) {
-            println!("NewsItem >>: {:?}", item);
+        // // Print the first 5 news items
+        // for item in first_five_items {
+        //     println!("NewsItem >>: {:?}", item);
+        //     println!();
+        // }
+
+        // Get the contents of the items collected
+        let contents = get_all_contents(&first_five_items).await;
+
+        // Print the contents
+        for content in contents {
+            println!("Content >>: {:?}", content);
             println!();
         }
-    } else {
-        log::debug!("No items found")
     }
 }

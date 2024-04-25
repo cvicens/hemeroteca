@@ -6,7 +6,7 @@ use regex::Regex;
 use rss::{Channel, Item};
 
 /// Struct that represents a News Item
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct NewsItem {
     pub title: String,
     pub link: String,
@@ -144,9 +144,7 @@ pub async fn get_all_items(
                     // Return those items that do not have any of the categories to filter out
                     let items: Vec<Item> = channel
                         .items()
-                        .iter()
-                        .cloned() // Clone the items before collecting them
-                        .collect();
+                        .to_vec();
                     log::trace!("> Read {} items from {}", items.len(), url);
                     items
                 }
@@ -164,10 +162,7 @@ pub async fn get_all_items(
         None
     } else {
         // Flatten the items vectors
-        let mut items: Vec<Item> = items.into_iter().flatten().collect();
-
-        // Shuffle the items
-        items.shuffle(&mut rand::thread_rng());
+        let items: Vec<Item> = items.into_iter().flatten().collect();
 
         // Convert the items to NewsItems
         let mut items: Vec<_> = items
@@ -189,9 +184,26 @@ pub async fn get_all_items(
                 .iter()
                 .any(|item| categories.contains(item) || keywords.contains(item))
         });
+
+        // Shuffle the items
+        items.shuffle(&mut rand::thread_rng());
+
         Some(items)
     }
 }
+
+
+/// Function that using rqwest gets all the contents of all the urls of a vec of NewsItems passed as a reference
+pub async fn get_all_contents(news_items: &Vec<NewsItem>) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut contents = Vec::new();
+    for news_item in news_items {
+        let response = reqwest::get(&news_item.link).await?;
+        let content = response.text().await?;
+        contents.push(content);
+    }
+    Ok(contents)
+}
+
 
 #[cfg(test)]
 mod tests {

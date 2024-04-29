@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.3", features = ["derive"] }
 env_logger = "0.11.3"
+html2text = "0.12.4"
 log = "0.4.21"
 rand = "0.8.5"
 regex = "1.10.4"

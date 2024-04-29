@@ -1,18 +1,32 @@
 //! Library that provides functions to read and parse RSS feeds
-use std::{error::Error, io::BufRead};
+use std::{
+    error::Error,
+    io::{BufRead, Cursor},
+};
 
+use html2text::config;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rss::{Channel, Item};
 
 /// Struct that represents a News Item
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct NewsItem {
     pub title: String,
     pub link: String,
     pub description: String,
     pub categories: Option<String>,
     pub keywords: Option<String>,
+    pub clean_content: Result<String, PipelineError>,
+}
+
+// Define a custom error type for the pipeline
+#[derive(Debug, Clone)]
+pub enum PipelineError {
+    EmptyString,
+    ParsingError(String),
+    NoContent,
+    NetworkError(String),
 }
 
 impl NewsItem {
@@ -64,6 +78,7 @@ impl NewsItem {
             description,
             categories,
             keywords,
+            clean_content: Err(PipelineError::EmptyString),
         })
     }
 }
@@ -142,9 +157,7 @@ pub async fn get_all_items(
                 } else {
                     let channel = channel.unwrap();
                     // Return those items that do not have any of the categories to filter out
-                    let items: Vec<Item> = channel
-                        .items()
-                        .to_vec();
+                    let items: Vec<Item> = channel.items().to_vec();
                     log::trace!("> Read {} items from {}", items.len(), url);
                     items
                 }
@@ -192,18 +205,128 @@ pub async fn get_all_items(
     }
 }
 
+// /// Function that using rqwest gets all the contents of all the urls of a vec of NewsItems passed as a reference
+// pub async fn get_all_contents(news_items: &Vec<NewsItem>) {
+//     let mut contents = Vec::new();
+//     for news_item in news_items {
+//         let response = reqwest::get(&news_item.link).await?;
+//         let content = response.text().await;
+//         if let Ok(content) = content {
+//             news_item.clean_content = html_to_text(content);
+//         } else {
+//             let error = content.err().unwrap().to_string();
+//             log::error!(
+//                 "Could not get the content from {}. ERROR: {}",
+//                 news_item.link,
+//                 error
+//             );
+//             news_item.clean_content = Err(PipelineError::NetworkError(error));
+//         }
+//     }
+// }
 
-/// Function that using rqwest gets all the contents of all the urls of a vec of NewsItems passed as a reference
-pub async fn get_all_contents(news_items: &Vec<NewsItem>) -> Result<Vec<String>, Box<dyn Error>> {
-    let mut contents = Vec::new();
-    for news_item in news_items {
-        let response = reqwest::get(&news_item.link).await?;
-        let content = response.text().await?;
-        contents.push(content);
+/// Function that using rqwest gets the content of a NewsItem passed as a reference
+pub async fn fill_news_item_content(news_item: &mut NewsItem) {
+    let response = reqwest::get(&news_item.link).await;
+    if let Ok(response) = response {
+        let content = response.text().await;
+        if let Ok(content) = content {
+            news_item.clean_content = html_to_text(content);
+        } else {
+            let error = content.err().unwrap().to_string();
+            log::error!(
+                "Could parse the content from {}. ERROR: {}",
+                news_item.link,
+                error
+            );
+            news_item.clean_content = Err(PipelineError::ParsingError(error));
+        }    
+    } else {
+        let error = response.err().unwrap().to_string();
+        log::error!(
+            "Could not get the content from {}. ERROR: {}",
+            news_item.link,
+            error
+        );
+        news_item.clean_content = Err(PipelineError::NetworkError(error));
     }
-    Ok(contents)
 }
 
+/// Function that cleans the text content of an html string
+///
+/// Example:
+/// ```
+/// use hemeroteca::html_to_text;
+///
+/// let html = r#"
+///    <html>
+///       <head><title>Example Page</title></head>
+///      <body>
+///         <h1>Welcome to Example Page</h1>
+///        <p>This is a paragraph with <strong>bold</strong> text.</p>
+///       <ul>
+///         <li>Item 1</li>
+///        <li>Item 2</li>
+///      </ul>
+///    </body>
+/// </html>
+/// "#;
+/// let clean_text = html_to_text(html.to_string()).unwrap();
+/// assert_eq!(clean_text, "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\n* Item 1\n* Item 2\n");
+/// ```
+pub fn html_to_text(html: String) -> Result<String, PipelineError> {
+    // Check that html is not empty
+    if html.is_empty() {
+        Err(PipelineError::EmptyString)
+    } else {
+        // Use html2text to clean the html
+        let clean_result = config::plain().string_from_read(Cursor::new(html), 1000);
+
+        if let Ok(clean_text) = clean_result {
+            Ok(clean_text)
+        } else {
+            Err(PipelineError::ParsingError(
+                clean_result.err().unwrap().to_string(),
+            ))
+        }
+    }
+}
+
+/// Function that given a vector of NewsItems and the max number of threads to spawn, fills the clean_content field of the NewsItems
+pub async fn fill_news_items_with_clean_contents(
+    news_items: &mut Vec<NewsItem>,
+    max_threads: u8
+) -> Option<Vec<NewsItem>> {
+    let mut clean_news_items = Vec::new();
+    // While there are contents to clean
+    while !news_items.is_empty() {
+        // Calculate the number of threads to spawn
+        let threads = std::cmp::min(max_threads as usize, news_items.len());
+
+        // Spawn as many thread as the minimum of max number of threads and the number of urls and get the handles
+        log::trace!("Spawning {} threads", threads);
+        let mut handles = vec![];
+        for _ in 0..threads {
+            let mut news_item = news_items.pop().unwrap();
+            let handle = tokio::spawn(async move {
+                fill_news_item_content(&mut news_item).await;
+                news_item
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all the threads to finish
+        for handle in handles {
+            clean_news_items.push(handle.await.unwrap());
+        }
+    }
+
+    if clean_news_items.is_empty() {
+        None
+    } else {
+        Some(clean_news_items)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -394,6 +517,57 @@ mod tests {
         assert_eq!(
             news_item.keywords,
             Some("Keyword 1, Keyword 2".to_lowercase().to_string())
+        );
+    }
+
+    // Test cleam_html function with an empty string
+    #[test]
+    fn test_html_to_text_with_empty_string() {
+        let html = "";
+        let clean_text = html_to_text(html.to_string());
+        assert!(clean_text.is_err());
+    }
+
+    // Test cleam_html function with bad formatted html
+    #[test]
+    fn test_html_to_text_with_bad_formatted() {
+        let html = r#"
+        <ht>
+        <bo dy>
+        This is a Heading
+        <p>This is a paragraph</p>
+        </bo dy
+        "#;
+
+        let clean_text = html_to_text(html.to_string()).unwrap();
+        assert_eq!(clean_text, "This is a Heading\n\nThis is a paragraph\n");
+    }
+
+    // Test cleam_html function with emojis and special characters
+    #[test]
+    fn test_html_to_text_with_emojis_special_chars() {
+        let html = r#"
+        <html>
+        <head><title>Example Page</title></head>
+        <body>
+        <h1>Welcome to Example Page</h1>
+        <p>This is a paragraph with <strong>bold</strong> text.</p>
+        <p>This is a paragraph with <em>italic</em> text.</p>
+        <p>This is a paragraph with <em>italic</em> text and an emoji 😊.</p>
+        <p>Párrafo con caracteres especiales como: ñéåîü€@.</p>
+        <ul>
+        <li>Item one</li>
+        <li>Item two</li>
+        <li>Item three</li>
+        </ul>
+        </body>
+        </html>
+        "#;
+
+        let clean_text = html_to_text(html.to_string()).unwrap();
+        assert_eq!(
+            clean_text,
+            "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\nThis is a paragraph with *italic* text.\n\nThis is a paragraph with *italic* text and an emoji 😊.\n\nPárrafo con caracteres especiales como: ñéåîü€@.\n\n* Item one\n* Item two\n* Item three\n"
         );
     }
 }

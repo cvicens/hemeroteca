@@ -1,6 +1,8 @@
-use hemeroteca::{get_all_contents, get_all_items, read_urls, NewsItem};
+use hemeroteca::{fill_news_items_with_clean_contents, get_all_items, read_urls, NewsItem};
 
 use clap::Parser;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 // CLAP Arguments Parsing
 #[derive(Parser, Debug)]
@@ -56,9 +58,9 @@ async fn main() {
     // Vector to store the items read from the feeds
     let items = get_all_items(&mut feed_urls, max_threads, opt_in).await;
 
-    if let Some(items) = items {
-        // Get the first 5 news items
-        let first_five_items = items.iter().take(5).cloned().collect();
+    if let Some(mut items) = items {
+        // Truncate the vec to the first 5
+        items.truncate(5);
 
         // // Print the first 5 news items
         // for item in first_five_items {
@@ -67,12 +69,34 @@ async fn main() {
         // }
 
         // Get the contents of the items collected
-        let contents = get_all_contents(&first_five_items).await;
+        // let contents = get_all_contents(&items).await;
 
-        // Print the contents
-        for content in contents {
-            println!("Content >>: {:?}", content);
-            println!();
+        // Clean the contents
+        let clean_news_items = fill_news_items_with_clean_contents(&mut items, max_threads).await;
+
+            // ...
+
+        if let Some(clean_news_items) = clean_news_items {
+            let mut file = OpenOptions::new()
+                .create(true) // Create if it doesn't exist
+                .append(true) // Append to the file
+                .open("output.txt").unwrap();
+            // Write the contents to the file
+            for item in clean_news_items {
+                // If clean_content is not an error, write it to the file
+                // It clean_content is not an error, write it to the file
+                if let Ok(clean_content) = item.clean_content {
+                    writeln!(file, "=======================================================================").unwrap();
+                    writeln!(file, "title: {}", item.title).unwrap();
+                    writeln!(file, "link: {}", item.link).unwrap();
+                    writeln!(file, "description: {}", item.description).unwrap();
+                    writeln!(file, "clean_content: {}", clean_content).unwrap();
+                } else {
+                    // If it is an error, print the error
+                    log::error!("Could not write the content to the file. ERROR: {:?}", item.clean_content);
+                }
+            }
+            
         }
     }
 }

@@ -1,17 +1,30 @@
 //! Library that provides functions to read and parse RSS feeds
 use std::{
     error::Error,
-    io::{BufRead, Cursor},
+    io::{BufRead, Cursor}
 };
+
+use select::{document::Document, node};
+use select::predicate::Name;
 
 use html2text::config;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rss::{Channel, Item};
 
+/// Enum that represents the different types of channels
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChannelType {
+    ElPais,
+    VeinteMinutos,
+    ElDiario,
+    Other,
+}
+
 /// Struct that represents a News Item
 #[derive(Debug, Clone)]
 pub struct NewsItem {
+    pub channel: String,
     pub title: String,
     pub link: String,
     pub description: String,
@@ -38,10 +51,10 @@ impl NewsItem {
     /// use hemeroteca::NewsItem;
     ///
     /// let item = Item::default();
-    /// let news_item = NewsItem::from_item(&item);
+    /// let news_item = NewsItem::from_item("Other", &item);
     /// assert_eq!(news_item.is_err(), true);
     /// ```
-    pub fn from_item(item: &rss::Item) -> Result<NewsItem, Box<dyn Error>> {
+    pub fn from_item(channel: &str, item: &rss::Item) -> Result<NewsItem, Box<dyn Error>> {
         let title = item.title().ok_or("No title")?.to_string();
         let link = item.link().ok_or("No link")?.to_string();
         let description = item.description().ok_or("No description")?.to_string();
@@ -73,6 +86,7 @@ impl NewsItem {
                 .map(|keywords| keywords.join(","))
         });
         Ok(NewsItem {
+            channel: channel.to_string(),
             title,
             link,
             description,
@@ -134,7 +148,7 @@ pub async fn get_all_items(
     max_threads: u8,
     opt_in: Vec<String>,
 ) -> Option<Vec<NewsItem>> {
-    let mut items = Vec::new();
+    let mut channels = Vec::new();
     // While there are urls to read
     while !feed_urls.is_empty() {
         // Calculate the number of threads to spawn
@@ -153,13 +167,13 @@ pub async fn get_all_items(
                         url,
                         channel.err().unwrap()
                     );
-                    vec![]
+                    None
                 } else {
-                    let channel = channel.unwrap();
-                    // Return those items that do not have any of the categories to filter out
-                    let items: Vec<Item> = channel.items().to_vec();
-                    log::trace!("> Read {} items from {}", items.len(), url);
-                    items
+                    // let channel = channel.unwrap();
+                    // // Return those items that do not have any of the categories to filter out
+                    // let items: Vec<Item> = channel.items().to_vec();
+                    // log::trace!("> Read {} items from {}", items.len(), url);
+                    Some(channel.unwrap())
                 }
             });
             handles.push(handle);
@@ -167,24 +181,50 @@ pub async fn get_all_items(
 
         // Wait for all the threads to finish
         for handle in handles {
-            items.push(handle.await.unwrap());
+            channels.push(handle.await.unwrap());
         }
     }
 
+    // Get the items from the channels
+    let items: Vec<(&str,Vec<Item>)> = channels
+        .iter()
+        .filter_map(|channel| {
+            if let Some(channel) = channel {
+                // (Some(channel.title), Some(channel.items().to_vec()))
+                Some((channel.title(), channel.items().to_vec()))
+            } else {
+                // (None, None)
+                None
+            }
+        })
+        .collect();
+
+    
     if items.is_empty() {
         None
     } else {
-        // Flatten the items vectors
-        let items: Vec<Item> = items.into_iter().flatten().collect();
-
-        // Convert the items to NewsItems
-        let mut items: Vec<_> = items
+        let mut all_items: Vec<NewsItem> = items
             .iter()
-            .map(|item| NewsItem::from_item(item).unwrap())
+            .map(|(channel, items)| {
+                items
+                    .iter()
+                    .map(|item| NewsItem::from_item(channel, item))
+                    .filter_map(|result| {
+                        if result.is_ok() {
+                            Some(result.unwrap())
+                        } else {
+                            log::error!("Could not get the item from the result: {:?}", result);
+                            None
+                        }
+                    })
+                    .collect::<Vec<NewsItem>>()
+            })
+            .flatten()
             .collect();
+        
 
-        // Filter out the items that have any of the categories or keywords equal to the categories to filter out
-        items.retain(|item| {
+        // Retains the items that have any of the categories or keywords equal to the categories to opt in
+        all_items.retain(|item| {
             let categories = item.categories.clone().unwrap_or("".to_string());
             let keywords = item.keywords.clone().unwrap_or("".to_string());
             log::trace!(
@@ -199,9 +239,9 @@ pub async fn get_all_items(
         });
 
         // Shuffle the items
-        items.shuffle(&mut rand::thread_rng());
+        all_items.shuffle(&mut rand::thread_rng());
 
-        Some(items)
+        Some(all_items)
     }
 }
 
@@ -225,13 +265,149 @@ pub async fn get_all_items(
 //     }
 // }
 
+/// Function that returns the channel given the channel name as a string
+/// 
+/// Example:
+/// ```
+/// use hemeroteca::{get_channel_type, ChannelType};
+/// 
+/// let channel = "EL PAÍS: el periódico global".to_string();
+/// let channel_type = get_channel_type(&channel);
+/// assert_eq!(channel_type, ChannelType::ElPais);
+/// let channel = "20MINUTOS - ...".to_string();
+/// let channel_type = get_channel_type(&channel);
+/// assert_eq!(channel_type, ChannelType::VeinteMinutos);
+/// let channel = "El Diario".to_string();
+/// let channel_type = get_channel_type(&channel);
+/// assert_eq!(channel_type, ChannelType::ElDiario);
+/// let channel = "Other".to_string();
+/// let channel_type = get_channel_type(&channel);
+/// assert_eq!(channel_type, ChannelType::Other);
+/// ```
+pub fn get_channel_type(channel: &String) -> ChannelType {
+    // If channel in uppercase starts with "EL PAÍS" return ElPais
+    if channel.to_uppercase().starts_with("EL PAÍS") {
+        ChannelType::ElPais
+    // If channel in uppercase starts with "20 MINUTOS" return VeinteMinutos
+    } else if channel.to_uppercase().starts_with("20MINUTOS") {
+        ChannelType::VeinteMinutos
+    // If channel in uppercase starts with "EL DIARIO" return ElDiario
+    } else if channel.to_uppercase().starts_with("EL DIARIO") {
+        ChannelType::ElDiario
+    // Otherwise return Other
+    } else {
+        ChannelType::Other
+    }
+}
+
+
+/// Function that cleans the content of an html string depending on the feed it comes from
+/// 
+/// Example:
+/// 
+/// ```
+/// use hemeroteca::clean_content;
+/// 
+/// let channel = "Otherl".to_string();
+/// let content = r#"
+/// <html>
+///    <head><title>Example Page</title></head>
+///   <body>
+///     <h1>Welcome to Example Page</h1>
+///     <p>This is a paragraph with <strong>bold</strong> text.</p>
+///     <ul>
+///      <li>Item 1</li>
+///      <li>Item 2</li>
+///     </ul>
+///   </body>
+/// </html>
+/// "#;
+/// let clean_text = clean_content(&channel, content.to_string()).unwrap();
+/// assert_eq!(clean_text, "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\n* Item 1\n* Item 2\n");
+/// ```
+pub fn clean_content(channel: &String, content: String) -> Result<String, PipelineError> {
+    log::trace!("Cleaning content from channel: {}", channel);
+    // Check that content is not empty
+    if content.is_empty() {
+        Err(PipelineError::EmptyString)
+    } else {
+        // Use html2text to filter paragraphs and lists
+        // Parse the HTML
+        let document = Document::from(content.as_str());
+
+        // Extract the desired elements
+        let mut extracted_html = String::new();
+
+        // Extract the content depending on the feed
+        match get_channel_type(channel) {
+            ChannelType::ElPais => {
+                // Extract the content from the article
+                if let Some(article) = document.find(Name("article")).next() {
+                    // print all attributes of the article
+                    for attr in article.attrs() {
+                        log::trace!(">>> Article attr: {:?}", attr);
+                    }
+                    for div in article.find(Name("div")) {
+                        // print all attributes of the article
+                        for attr in div.attrs() {
+                            log::trace!(">>> Div attr: {:?}", attr);
+                            if attr.0 == "data-dtm-region" && attr.1 == "articulo_cuerpo" {
+                                for paragraph in div.find(Name("p")) {
+                                    extracted_html.push_str(&paragraph.html());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ChannelType::VeinteMinutos => {
+                // Extract the content from the article of class "article-body"
+                if let Some(article) = document.find(Name("article")).next() {
+                    if let node::Data::Text(text) = article.data() {
+                        log::trace!("Article text: {}", text);
+                    }
+                    for paragraph in article.find(Name("p")) {
+                        extracted_html.push_str(&paragraph.html());
+                    }
+                }
+                
+            }
+            ChannelType::ElDiario => {
+                // Extract the content from the article
+                if let Some(article) = document.find(Name("article")).next() {
+                    extracted_html.push_str(&article.html());
+                }
+            }
+            _ => {
+                // Extract the content from the body
+                if let Some(body) = document.find(Name("body")).next() {
+                    extracted_html.push_str(&body.html());
+                }
+            }
+        }
+
+        // Use html2text to clean the html
+        let clean_result = config::plain().string_from_read(Cursor::new(extracted_html), 1000);
+
+        if let Ok(clean_text) = clean_result {
+            Ok(clean_text)
+        } else {
+            Err(PipelineError::ParsingError(
+                clean_result.err().unwrap().to_string(),
+            ))
+        }
+    }
+    
+}
+
+
 /// Function that using rqwest gets the content of a NewsItem passed as a reference
 pub async fn fill_news_item_content(news_item: &mut NewsItem) {
     let response = reqwest::get(&news_item.link).await;
     if let Ok(response) = response {
         let content = response.text().await;
         if let Ok(content) = content {
-            news_item.clean_content = html_to_text(content);
+            news_item.clean_content = clean_content(&news_item.channel, content);
         } else {
             let error = content.err().unwrap().to_string();
             log::error!(
@@ -249,46 +425,6 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
             error
         );
         news_item.clean_content = Err(PipelineError::NetworkError(error));
-    }
-}
-
-/// Function that cleans the text content of an html string
-///
-/// Example:
-/// ```
-/// use hemeroteca::html_to_text;
-///
-/// let html = r#"
-///    <html>
-///       <head><title>Example Page</title></head>
-///      <body>
-///         <h1>Welcome to Example Page</h1>
-///        <p>This is a paragraph with <strong>bold</strong> text.</p>
-///       <ul>
-///         <li>Item 1</li>
-///        <li>Item 2</li>
-///      </ul>
-///    </body>
-/// </html>
-/// "#;
-/// let clean_text = html_to_text(html.to_string()).unwrap();
-/// assert_eq!(clean_text, "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\n* Item 1\n* Item 2\n");
-/// ```
-pub fn html_to_text(html: String) -> Result<String, PipelineError> {
-    // Check that html is not empty
-    if html.is_empty() {
-        Err(PipelineError::EmptyString)
-    } else {
-        // Use html2text to clean the html
-        let clean_result = config::plain().string_from_read(Cursor::new(html), 1000);
-
-        if let Ok(clean_text) = clean_result {
-            Ok(clean_text)
-        } else {
-            Err(PipelineError::ParsingError(
-                clean_result.err().unwrap().to_string(),
-            ))
-        }
     }
 }
 
@@ -405,7 +541,7 @@ mod tests {
 
         log::trace!("Channel: {:?}", channel.to_string());
 
-        let news_item = NewsItem::from_item(&item).unwrap();
+        let news_item = NewsItem::from_item(&channel.title(), &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
         assert_eq!(
             news_item.link,
@@ -439,7 +575,7 @@ mod tests {
             .categories(vec![category1.clone(), category2.clone()])
             .build();
 
-        let news_item = NewsItem::from_item(&item).unwrap();
+        let news_item = NewsItem::from_item("Other", &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
         assert_eq!(
             news_item.link,
@@ -465,7 +601,7 @@ mod tests {
             .description(Some("Description".to_string()))
             .build();
 
-        let news_item = NewsItem::from_item(&item).unwrap();
+        let news_item = NewsItem::from_item("Other", &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
         assert_eq!(
             news_item.link,
@@ -482,7 +618,7 @@ mod tests {
         // Create a test Item with title, link, description and categories
         let item = rss::ItemBuilder::default().build();
 
-        let news_item = NewsItem::from_item(&item);
+        let news_item = NewsItem::from_item("Other", &item);
         assert_eq!(news_item.is_err(), true);
     }
 
@@ -500,7 +636,7 @@ mod tests {
         log::trace!("Item: {:?}", &items[0]);
 
         // Convert the item to news item
-        let news_item = NewsItem::from_item(&items[0]).unwrap();
+        let news_item = NewsItem::from_item("Other", &items[0]).unwrap();
 
         log::trace!("NewsItem: {:?}", news_item);
 
@@ -522,15 +658,17 @@ mod tests {
 
     // Test cleam_html function with an empty string
     #[test]
-    fn test_html_to_text_with_empty_string() {
+    fn test_clean_content_with_empty_string() {
+        let channel = "Other".to_string();
         let html = "";
-        let clean_text = html_to_text(html.to_string());
+        let clean_text = clean_content(&channel, html.to_string());
         assert!(clean_text.is_err());
     }
 
     // Test cleam_html function with bad formatted html
     #[test]
-    fn test_html_to_text_with_bad_formatted() {
+    fn test_clean_content_with_bad_formatted() {
+        let channel = "Other".to_string();
         let html = r#"
         <ht>
         <bo dy>
@@ -539,13 +677,14 @@ mod tests {
         </bo dy
         "#;
 
-        let clean_text = html_to_text(html.to_string()).unwrap();
+        let clean_text = clean_content(&channel, html.to_string()).unwrap();
         assert_eq!(clean_text, "This is a Heading\n\nThis is a paragraph\n");
     }
 
     // Test cleam_html function with emojis and special characters
     #[test]
-    fn test_html_to_text_with_emojis_special_chars() {
+    fn test_clean_content_with_emojis_special_chars() {
+        let channel = "Other".to_string();
         let html = r#"
         <html>
         <head><title>Example Page</title></head>
@@ -564,7 +703,7 @@ mod tests {
         </html>
         "#;
 
-        let clean_text = html_to_text(html.to_string()).unwrap();
+        let clean_text = clean_content(&channel, html.to_string()).unwrap();
         assert_eq!(
             clean_text,
             "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\nThis is a paragraph with *italic* text.\n\nThis is a paragraph with *italic* text and an emoji 😊.\n\nPárrafo con caracteres especiales como: ñéåîü€@.\n\n* Item one\n* Item two\n* Item three\n"

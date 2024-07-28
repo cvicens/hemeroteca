@@ -53,7 +53,7 @@ async fn main() {
         .into_iter()
         .map(|s| s.to_lowercase())
         .collect::<Vec<String>>();
-    log::debug!("Filtering in: {:?}", opt_in);
+    log::info!("Filtering in: {:?}", opt_in);
 
     // If no opt_in is provided, print a warning and exit
     if opt_in.is_empty() {
@@ -63,6 +63,7 @@ async fn main() {
 
     // Read the feed urls from the file
     let feed_urls = read_urls(&feeds_file);
+    log::info!("Reading feed urls from the file: {}", feeds_file);
 
     // If we could not read the urls from the file, print the error and return
     if let Err(err) = feed_urls {
@@ -72,29 +73,19 @@ async fn main() {
 
     // Unwrap urls
     let mut feed_urls = feed_urls.unwrap();
-    log::debug!("Feed URLs: {:?}", feed_urls);
+    log::info!("Feed urls to read: {:?}", feed_urls);
 
     // Vector to store the items read from the feeds
     let items = get_all_items(&mut feed_urls, max_threads, opt_in).await;
 
+    // if we could read the items from the feeds
     if let Some(mut items) = items {
-        // Truncate the vec to the first 5
-        items.truncate(100);
+        log::info!("Items read from the feeds: {:?}", items.len());
 
-        // // Print the first 5 news items
-        // for item in first_five_items {
-        //     println!("NewsItem >>: {:?}", item);
-        //     println!();
-        // }
-
-        // Get the contents of the items collected
-        // let contents = get_all_contents(&items).await;
-
-        // Clean the contents
+        // Fill the news items with clean contents
         let clean_news_items = fill_news_items_with_clean_contents(&mut items, max_threads).await;
 
-            // ...
-
+        // Write intermidiate results to the file
         if let Some(clean_news_items) = clean_news_items {
             let mut file = OpenOptions::new()
                 .create(true) // Create if it doesn't exist
@@ -110,6 +101,9 @@ async fn main() {
                     writeln!(file, "title: {}", item.title).unwrap();
                     writeln!(file, "link: {}", item.link).unwrap();
                     writeln!(file, "description: {}", item.description).unwrap();
+                    writeln!(file, "pub_date: {}", item.pub_date.unwrap_or_default()).unwrap();
+                    writeln!(file, "categories: {}", item.categories.unwrap_or_default()).unwrap();
+                    writeln!(file, "keywords: {}", item.keywords.unwrap_or_default()).unwrap();
                     writeln!(file, "clean_content: {}", clean_content).unwrap();
                 } else {
                     // If it is an error, print the error

@@ -28,6 +28,7 @@ pub struct NewsItem {
     pub title: String,
     pub link: String,
     pub description: String,
+    pub pub_date: Option<String>,
     pub categories: Option<String>,
     pub keywords: Option<String>,
     pub clean_content: Result<String, PipelineError>,
@@ -58,6 +59,7 @@ impl NewsItem {
         let title = item.title().ok_or("No title")?.to_string();
         let link = item.link().ok_or("No link")?.to_string();
         let description = item.description().ok_or("No description")?.to_string();
+        let pub_date = item.pub_date().map(|date| date.to_string());
         let categories = item
             .categories()
             .iter()
@@ -90,6 +92,7 @@ impl NewsItem {
             title,
             link,
             description,
+            pub_date,
             categories,
             keywords,
             clean_content: Err(PipelineError::EmptyString),
@@ -169,10 +172,6 @@ pub async fn get_all_items(
                     );
                     None
                 } else {
-                    // let channel = channel.unwrap();
-                    // // Return those items that do not have any of the categories to filter out
-                    // let items: Vec<Item> = channel.items().to_vec();
-                    // log::trace!("> Read {} items from {}", items.len(), url);
                     Some(channel.unwrap())
                 }
             });
@@ -286,13 +285,13 @@ pub async fn get_all_items(
 /// ```
 pub fn get_channel_type(channel: &String) -> ChannelType {
     // If channel in uppercase starts with "EL PAÍS" return ElPais
-    if channel.to_uppercase().starts_with("EL PAÍS") {
+    if channel.to_uppercase().contains("EL PAÍS") {
         ChannelType::ElPais
     // If channel in uppercase starts with "20 MINUTOS" return VeinteMinutos
-    } else if channel.to_uppercase().starts_with("20MINUTOS") {
+    } else if channel.to_uppercase().contains("20MINUTOS") {
         ChannelType::VeinteMinutos
     // If channel in uppercase starts with "EL DIARIO" return ElDiario
-    } else if channel.to_uppercase().starts_with("EL DIARIO") {
+    } else if channel.to_uppercase().contains("ELDIARIO.ES") {
         ChannelType::ElDiario
     // Otherwise return Other
     } else {
@@ -373,9 +372,25 @@ pub fn clean_content(channel: &String, content: String) -> Result<String, Pipeli
                 
             }
             ChannelType::ElDiario => {
+                log::trace!("Channel is ElDiario");
                 // Extract the content from the article
-                if let Some(article) = document.find(Name("article")).next() {
-                    extracted_html.push_str(&article.html());
+                if let Some(article) = document.find(Name("main")).next() {
+                    for paragraph in article.find(Name("p")) {
+                        for attr in paragraph.attrs() {
+                            log::trace!(">>> Paragraph attr: {:?}", attr);
+                            if attr.0 == "class" && attr.1 == "article-text" {
+                                extracted_html.push_str(&paragraph.html());
+                            }
+                        }
+                    }
+                }
+                else {
+                    // Extract the content from the body
+                    log::trace!("No main found!!!");
+                    if let Some(body) = document.find(Name("body")).next() {
+                        extracted_html.push_str(&body.html());
+                    }
+                
                 }
             }
             _ => {

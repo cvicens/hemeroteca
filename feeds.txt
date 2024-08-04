@@ -1,3 +1,4 @@
 https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada
+https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/internacional/portada
 https://www.20minutos.es/rss/
 https://www.eldiario.es/rss/

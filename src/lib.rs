@@ -1,7 +1,11 @@
 //! Library that provides functions to read and parse RSS feeds
+//! 
+
+pub mod summary;
+
 use std::{
     error::Error,
-    io::{BufRead, Cursor}
+    io::{BufRead, Cursor, Write},
 };
 
 use select::{document::Document, node};
@@ -31,7 +35,8 @@ pub struct NewsItem {
     pub pub_date: Option<String>,
     pub categories: Option<String>,
     pub keywords: Option<String>,
-    pub clean_content: Result<String, PipelineError>,
+    pub clean_content: Option<String>,
+    pub error: Option<PipelineError>,
 }
 
 // Define a custom error type for the pipeline
@@ -95,7 +100,8 @@ impl NewsItem {
             pub_date,
             categories,
             keywords,
-            clean_content: Err(PipelineError::EmptyString),
+            clean_content: None,
+            error: None,
         })
     }
 }
@@ -422,7 +428,33 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
     if let Ok(response) = response {
         let content = response.text().await;
         if let Ok(content) = content {
-            news_item.clean_content = clean_content(&news_item.channel, content);
+            let clean_content = clean_content(&news_item.channel, content);
+            match clean_content {
+                Ok(clean_content) => {
+                    // If clean_content is not empty, assign it to the news_item
+                    if !clean_content.is_empty() {
+                        news_item.clean_content = Some(clean_content);
+                    } else {
+                        log::error!(
+                            "Could not clean the content from {}. ERROR: {}",
+                            news_item.link,
+                            "Empty content"
+                        );
+                        news_item.clean_content = None;
+                        news_item.error = Some(PipelineError::NoContent);
+                    }
+                }
+                Err(err) => {
+                    log::error!(
+                        "Could not clean the content from {}. ERROR: {:?}",
+                        news_item.link,
+                        err
+                    );
+                    news_item.clean_content = None;
+                    news_item.error = Some(err);
+                }
+                
+            }
         } else {
             let error = content.err().unwrap().to_string();
             log::error!(
@@ -430,7 +462,8 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
                 news_item.link,
                 error
             );
-            news_item.clean_content = Err(PipelineError::ParsingError(error));
+            news_item.clean_content = None;
+            news_item.error = Some(PipelineError::ParsingError(error));
         }    
     } else {
         let error = response.err().unwrap().to_string();
@@ -439,7 +472,36 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
             news_item.link,
             error
         );
-        news_item.clean_content = Err(PipelineError::NetworkError(error));
+        news_item.clean_content = None;
+        news_item.error = Some(PipelineError::NetworkError(error));
+    }
+}
+
+/// Function that logs a vector of NewsItems to a file appending the contents
+pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .unwrap();
+    for item in news_items {
+        writeln!(file, "=======================================================================").unwrap();
+        writeln!(file, "channel: {}", item.channel).unwrap();
+        writeln!(file, "title: {}", item.title).unwrap();
+        writeln!(file, "link: {}", item.link).unwrap();
+        writeln!(file, "description: {}", item.description).unwrap();
+        writeln!(file, "pub_date: {:?}", item.pub_date).unwrap();
+        writeln!(file, "categories: {:?}", item.categories).unwrap();
+        writeln!(file, "keywords: {:?}", item.keywords).unwrap();
+        match &item.clean_content {
+            Some(clean_content) => {
+                writeln!(file, "clean_content: {}", clean_content).unwrap();
+            }
+            None => {
+                writeln!(file, "clean_content: N/A").unwrap();
+            }
+        }
+        writeln!(file, "error: {:?}", item.error).unwrap();
     }
 }
 

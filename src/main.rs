@@ -1,8 +1,7 @@
-use hemeroteca::{fill_news_items_with_clean_contents, get_all_items, read_urls};
+use hemeroteca::summary::summarize;
+use hemeroteca::{fill_news_items_with_clean_contents, get_all_items, read_urls, log_news_items_to_file};
 
 use clap::Parser;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use env_logger::Env;
 
@@ -87,30 +86,12 @@ async fn main() {
 
         // Write intermidiate results to the file
         if let Some(clean_news_items) = clean_news_items {
-            let mut file = OpenOptions::new()
-                .create(true) // Create if it doesn't exist
-                .append(true) // Append to the file
-                .open(output_file).unwrap();
-            // Write the contents to the file
-            for item in clean_news_items {
-                // If clean_content is not an error, write it to the file
-                // It clean_content is not an error, write it to the file
-                if let Ok(clean_content) = item.clean_content {
-                    writeln!(file, "=======================================================================").unwrap();
-                    writeln!(file, "channel: {}", item.channel).unwrap();
-                    writeln!(file, "title: {}", item.title).unwrap();
-                    writeln!(file, "link: {}", item.link).unwrap();
-                    writeln!(file, "description: {}", item.description).unwrap();
-                    writeln!(file, "pub_date: {}", item.pub_date.unwrap_or_default()).unwrap();
-                    writeln!(file, "categories: {}", item.categories.unwrap_or_default()).unwrap();
-                    writeln!(file, "keywords: {}", item.keywords.unwrap_or_default()).unwrap();
-                    writeln!(file, "clean_content: {}", clean_content).unwrap();
-                } else {
-                    // If it is an error, print the error
-                    log::error!("Could not write the content to the file. ERROR: {:?}", item.clean_content);
-                }
-            }
-            
+            // Log clean news items to output file
+            log_news_items_to_file(&clean_news_items, &output_file);
+
+            // Call summarize function
+            // let summary = summarize();
+            // print!("Summary: {}", summary);
         }
         else {
             log::error!("No news items survived the cleaning phase! Exiting...");

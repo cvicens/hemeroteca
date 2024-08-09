@@ -1,7 +1,25 @@
 //! Library that provides functions to read and parse RSS feeds
 //! 
 
-pub mod summary;
+pub mod common;
+pub mod storage;
+
+// Re-export commonly used items in a prelude module
+pub mod prelude {
+    pub use crate::common::NewsItem;
+    pub use crate::common::ChannelType;
+    pub use crate::common::PipelineError;
+    pub use crate::read_feed;
+    pub use crate::read_urls;
+    pub use crate::get_all_items;
+    pub use crate::get_channel_type;
+    pub use crate::clean_content;
+    pub use crate::fill_news_item_content;
+    pub use crate::log_news_items_to_file;
+    pub use crate::fill_news_items_with_clean_contents;
+}
+
+use common::{NewsItem, ChannelType, PipelineError};
 
 use std::{
     error::Error,
@@ -15,96 +33,6 @@ use html2text::config;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rss::{Channel, Item};
-
-/// Enum that represents the different types of channels
-#[derive(Debug, PartialEq, Eq)]
-pub enum ChannelType {
-    ElPais,
-    VeinteMinutos,
-    ElDiario,
-    Other,
-}
-
-/// Struct that represents a News Item
-#[derive(Debug, Clone)]
-pub struct NewsItem {
-    pub channel: String,
-    pub title: String,
-    pub link: String,
-    pub description: String,
-    pub pub_date: Option<String>,
-    pub categories: Option<String>,
-    pub keywords: Option<String>,
-    pub clean_content: Option<String>,
-    pub error: Option<PipelineError>,
-}
-
-// Define a custom error type for the pipeline
-#[derive(Debug, Clone)]
-pub enum PipelineError {
-    EmptyString,
-    ParsingError(String),
-    NoContent,
-    NetworkError(String),
-}
-
-impl NewsItem {
-    /// Function that creates a NewsItem from an RSS Item and returns a Result or Error
-    ///
-    /// Example:
-    /// ```
-    /// use rss::Item;
-    /// use hemeroteca::NewsItem;
-    ///
-    /// let item = Item::default();
-    /// let news_item = NewsItem::from_item("Other", &item);
-    /// assert_eq!(news_item.is_err(), true);
-    /// ```
-    pub fn from_item(channel: &str, item: &rss::Item) -> Result<NewsItem, Box<dyn Error>> {
-        let title = item.title().ok_or("No title")?.to_string();
-        let link = item.link().ok_or("No link")?.to_string();
-        let description = item.description().ok_or("No description")?.to_string();
-        let pub_date = item.pub_date().map(|date| date.to_string());
-        let categories = item
-            .categories()
-            .iter()
-            .map(|category| category.name().to_string().to_lowercase())
-            .collect::<Vec<String>>();
-        let categories = if categories.is_empty() {
-            None
-        } else {
-            Some(categories.join(","))
-        };
-        let extensions = item.extensions().clone();
-        let keywords = extensions.get("media").and_then(|ext| {
-            ext.get("keywords")
-                .and_then(|extensions| {
-                    extensions
-                        .iter()
-                        .map(|ext| {
-                            if ext.name == "media:keywords" && ext.value.is_some() {
-                                Some(ext.value().unwrap().to_string().to_lowercase())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Option<Vec<String>>>()
-                })
-                .map(|keywords| keywords.join(","))
-        });
-        Ok(NewsItem {
-            channel: channel.to_string(),
-            title,
-            link,
-            description,
-            pub_date,
-            categories,
-            keywords,
-            clean_content: None,
-            error: None,
-        })
-    }
-}
 
 /// Function that reads a feed from a URL
 pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
@@ -274,7 +202,7 @@ pub async fn get_all_items(
 /// 
 /// Example:
 /// ```
-/// use hemeroteca::{get_channel_type, ChannelType};
+/// use hemeroteca::prelude::*;
 /// 
 /// let channel = "EL PAÍS: el periódico global".to_string();
 /// let channel_type = get_channel_type(&channel);
@@ -282,7 +210,7 @@ pub async fn get_all_items(
 /// let channel = "20MINUTOS - ...".to_string();
 /// let channel_type = get_channel_type(&channel);
 /// assert_eq!(channel_type, ChannelType::VeinteMinutos);
-/// let channel = "El Diario".to_string();
+/// let channel = "ElDiario.es".to_string();
 /// let channel_type = get_channel_type(&channel);
 /// assert_eq!(channel_type, ChannelType::ElDiario);
 /// let channel = "Other".to_string();
@@ -503,6 +431,22 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
         }
         writeln!(file, "error: {:?}", item.error).unwrap();
     }
+}
+
+/// Function that inserts a vector of NewsItems into a database
+pub fn insert_news_items(news_items: &Vec<NewsItem>, connection: &sqlite::Connection) -> usize {
+    let mut count = 0;
+    for news_item in news_items {
+        match  news_item.insert(connection) {
+            Err(err) => {
+                log::error!("Could not insert the NewsItem -> channel: {} link: {}. ERROR: {}", news_item.channel, news_item.link, err.message.unwrap_or("no message".to_string()));
+            },
+            _ => {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 /// Function that given a vector of NewsItems and the max number of threads to spawn, fills the clean_content field of the NewsItems

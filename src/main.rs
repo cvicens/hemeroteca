@@ -1,5 +1,5 @@
-use hemeroteca::summary::summarize;
-use hemeroteca::{fill_news_items_with_clean_contents, get_all_items, read_urls, log_news_items_to_file};
+
+use hemeroteca::{insert_news_items, prelude::*};
 
 use clap::Parser;
 
@@ -86,8 +86,22 @@ async fn main() {
 
         // Write intermidiate results to the file
         if let Some(clean_news_items) = clean_news_items {
+            log::info!("Clean news items: {:?}", clean_news_items.len());
+
             // Log clean news items to output file
             log_news_items_to_file(&clean_news_items, &output_file);
+
+            // Store in the database
+
+            // Open a connection to the database
+            let connection = sqlite::open("hemeroteca.db").unwrap();
+
+            // Create the table
+            NewsItem::create_table(&connection).unwrap();
+
+            // Insert the news items into the database
+            let unique_inserted_items = insert_news_items(&clean_news_items, &connection);
+            log::info!("Unique inserted items: {:?}", unique_inserted_items);
 
             // Call summarize function
             // let summary = summarize();

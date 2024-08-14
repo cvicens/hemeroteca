@@ -2,6 +2,13 @@
 
 use std::error::Error;
 
+// OptInOperator enum
+#[derive(Debug, Clone)]
+pub enum Operator {
+    AND,
+    OR,
+}
+
 /// Enum that represents the different types of channels
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChannelType {
@@ -18,6 +25,7 @@ pub struct NewsItem {
     pub title: String,
     pub link: String,
     pub description: String,
+    pub creators: String,
     pub pub_date: Option<String>,
     pub categories: Option<String>,
     pub keywords: Option<String>,
@@ -133,11 +141,19 @@ impl NewsItem {
                 })
                 .map(|keywords| keywords.join(","))
         });
+        // Get the creators from the dublin core extension if it exists
+        let creators = if let Some(dublin_core_ext) = item.dublin_core_ext() {
+            // Extract the dc:creator value
+            dublin_core_ext.creators.to_owned().join(",")
+        } else {
+            "".to_string()
+        };
         Ok(NewsItem {
             channel: channel.to_string(),
             title,
             link,
             description,
+            creators,
             pub_date,
             categories,
             keywords,

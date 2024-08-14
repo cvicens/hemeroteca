@@ -27,9 +27,9 @@ impl NewsItem {
     /// };
     /// 
     /// let binds = news_item.binds();
-    /// assert_eq!(binds.len(), 9);
+    /// assert_eq!(binds.len(), 10);
     /// ```
-    pub fn binds(&self) -> [(&str, &str); 9] {
+    pub fn binds(&self) -> [(&str, &str); 10] {
         let pub_date = match &self.pub_date {
             Some(date) => date.as_str(),
             None => "",
@@ -57,6 +57,7 @@ impl NewsItem {
             (":title", self.title.as_str()),
             (":link", self.link.as_str()),
             (":description", self.description.as_str()),
+            (":creators", self.creators.as_str()),
             (":pub_date", pub_date),
             (":categories", categories),
             (":keywords", keywords),
@@ -84,6 +85,7 @@ impl NewsItem {
                 title           TEXT NOT NULL,
                 link            TEXT NOT NULL UNIQUE,
                 description     TEXT NOT NULL,
+                creators        TEXT,
                 pub_date        TEXT,
                 categories      TEXT,
                 keywords        TEXT,
@@ -96,8 +98,8 @@ impl NewsItem {
 
     pub fn insert(&self, conn: &Connection) -> sqlite::Result<()> {
         let mut statement = conn.prepare(
-            "INSERT INTO news_item (channel, title, link, description, pub_date, categories, keywords, clean_content, error) 
-             VALUES (:channel, :title, :link, :description, :pub_date, :categories, :keywords, :clean_content, :error)",
+            "INSERT INTO news_item (channel, title, link, description, creators, pub_date, categories, keywords, clean_content, error) 
+             VALUES (:channel, :title, :link, :description, :creators, :pub_date, :categories, :keywords, :clean_content, :error)",
         )?;
         // Bind the values
         statement.bind(&self.binds()[..])?;
@@ -108,7 +110,7 @@ impl NewsItem {
 
     pub fn query_all(conn: &Connection) -> sqlite::Result<Vec<NewsItem>> {
         let mut statement = conn.prepare(
-            "SELECT channel, title, link, description, pub_date, categories, keywords, clean_content, error FROM news_item",
+            "SELECT channel, title, link, description, creators, pub_date, categories, keywords, clean_content, error FROM news_item",
         )?;
 
         let mut news_items = Vec::new();
@@ -117,11 +119,12 @@ impl NewsItem {
             let title: String = statement.read(1)?;
             let link: String = statement.read(2)?;
             let description: String = statement.read(3)?;
-            let pub_date: Option<String> = statement.read::<Option<String>, _>(4)?;
-            let categories: Option<String> = statement.read::<Option<String>, _>(5)?;
-            let keywords: Option<String> = statement.read::<Option<String>, _>(6)?;
-            let clean_content: Option<String> = statement.read::<Option<String>, _ >(7)?;
-            let error: Option<String> = statement.read::<Option<String>, _>(8)?;
+            let creators: String = statement.read(4)?;
+            let pub_date: Option<String> = statement.read::<Option<String>, _>(5)?;
+            let categories: Option<String> = statement.read::<Option<String>, _>(6)?;
+            let keywords: Option<String> = statement.read::<Option<String>, _>(7)?;
+            let clean_content: Option<String> = statement.read::<Option<String>, _ >(8)?;
+            let error: Option<String> = statement.read::<Option<String>, _>(9)?;
 
             let error = match error {
                 Some(e) => match e.as_str() {
@@ -140,6 +143,7 @@ impl NewsItem {
                 title,
                 link,
                 description,
+                creators,
                 pub_date,
                 categories,
                 keywords,

@@ -3,23 +3,34 @@
 
 pub mod common;
 pub mod storage;
+pub mod openai;
+pub mod relevance;
 
 // Re-export commonly used items in a prelude module
 pub mod prelude {
     pub use crate::common::NewsItem;
     pub use crate::common::ChannelType;
     pub use crate::common::PipelineError;
+    pub use crate::common::Operator;
+    pub use crate::openai::summarize;
+    pub use crate::relevance::calculate_relevance;
+    pub use crate::relevance::similar_to_root_word;
     pub use crate::read_feed;
     pub use crate::read_urls;
-    pub use crate::get_all_items;
+    pub use crate::fetch_news_items_opted_in;
     pub use crate::get_channel_type;
     pub use crate::clean_content;
     pub use crate::fill_news_item_content;
     pub use crate::log_news_items_to_file;
     pub use crate::fill_news_items_with_clean_contents;
+    pub use crate::insert_news_items;
+    pub use crate::top_k_news_items;
+    
 }
 
-use common::{NewsItem, ChannelType, PipelineError};
+use common::{ChannelType, NewsItem, Operator, PipelineError};
+use prelude::calculate_relevance;
+use tokio::task;
 
 use std::{
     error::Error,
@@ -78,12 +89,12 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
     Ok(urls)
 }
 
-/// Function that given a vector or feed urls and using read_feed get all the Items per Channel
-/// and returns them in an optional vector
-pub async fn get_all_items(
+/// Function that returns NewsItems from a vector of feed urls matching the categories or keywords passed as a reference
+pub async fn fetch_news_items_opted_in(
     feed_urls: &mut Vec<String>,
     max_threads: u8,
-    opt_in: Vec<String>,
+    opt_in: &Vec<String>,
+    operator: Operator,
 ) -> Option<Vec<NewsItem>> {
     let mut channels = Vec::new();
     // While there are urls to read
@@ -132,10 +143,11 @@ pub async fn get_all_items(
         })
         .collect();
 
-    
+    // If there are no items return None
     if items.is_empty() {
         None
     } else {
+        // Else, get all the items from the channels
         let mut all_items: Vec<NewsItem> = items
             .iter()
             .map(|(channel, items)| {
@@ -166,9 +178,16 @@ pub async fn get_all_items(
                 categories,
                 keywords
             );
-            opt_in
-                .iter()
-                .any(|item| categories.contains(item) || keywords.contains(item))
+
+            // Return true if all the opt_in items are in the categories or keywords
+            match operator {
+                Operator::AND => {
+                    opt_in.iter().all(|item| categories.contains(item) || keywords.contains(item))
+                }
+                Operator::OR => {
+                    opt_in.iter().any(|item| categories.contains(item) || keywords.contains(item))
+                }
+            }
         });
 
         // Shuffle the items
@@ -403,6 +422,54 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
         news_item.clean_content = None;
         news_item.error = Some(PipelineError::NetworkError(error));
     }
+}
+
+
+
+// /// Function that returns the top k news items from the database
+// pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<NewsItem> {
+//     // The top k news items are the ones with the highest relevance
+//     let mut news_items = news_items.clone();
+//     news_items.sort_by(|a, b| {
+//         let relevance_a = calculate_relevance(a);
+//         let relevance_b = calculate_relevance(b);
+//         relevance_b.cmp(&relevance_a)
+//     });
+
+//     news_items.into_iter().take(top_k as usize).collect()
+// }
+
+/// Function that returns the top k news items from the database
+pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<NewsItem> {
+    // The top k news items are the ones with the highest relevance
+    let mut handles = Vec::new();
+
+    for item in news_items.iter() {
+        let item = item.clone();
+        // Spawn a blocking task for each relevance calculation
+        let handle = task::spawn_blocking(move || {
+            let relevance = calculate_relevance(&item);
+            (item, relevance)
+        });
+        handles.push(handle);
+    }
+
+    let mut items_with_relevance = Vec::new();
+    for handle in handles {
+        if let Ok(result) = handle.await {
+            items_with_relevance.push(result);
+        }
+    }
+
+    // Sort items by relevance
+    items_with_relevance.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Take the top k items
+    items_with_relevance
+        .into_iter()
+        .take(top_k as usize)
+        .map(|(item, _)| item)
+        .collect()
 }
 
 /// Function that logs a vector of NewsItems to a file appending the contents

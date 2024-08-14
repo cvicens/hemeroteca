@@ -1,9 +1,25 @@
 
-use hemeroteca::{insert_news_items, prelude::*};
+use hemeroteca::prelude::*;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use env_logger::Env;
+
+// OptInOperator enum
+#[derive(Debug, Clone, ValueEnum)]
+enum OptInOperator {
+    AND,
+    OR,
+}
+
+impl OptInOperator {
+    fn as_wrapper(&self) -> Operator {
+        match self {
+            OptInOperator::AND => Operator::AND,
+            OptInOperator::OR => Operator::OR,
+        }
+    }
+}
 
 // CLAP Arguments Parsing
 #[derive(Parser, Debug)]
@@ -13,6 +29,10 @@ struct Args {
     #[arg(short, long, default_value = "feeds.txt")]
     feeds_file: String,
 
+    /// Report name
+    #[arg(long, default_value = "hemeroteca")]
+    report_name: String,
+
     /// File to output the news items
     #[arg(long, default_value = "output.txt")]
     output_file: String,
@@ -21,14 +41,18 @@ struct Args {
     #[arg(short, long, default_value = "4")]
     threads: u8,
 
-    /// List of categories or keywords to filter out
+    /// List of categories or keywords to opt in
     #[arg(short, long)]
     opt_in: Vec<String>,
+
+    /// Operator to use for filtering only `and` and `or` are supported
+    #[arg(long, default_value = "or")]
+    operator: OptInOperator,
 }
 
 #[tokio::main]
 async fn main() {
-    // Initialize the logger
+    // Initialize the logger and turn off html5ever logs
     // env_logger::init();
     env_logger::Builder::from_env(Env::default())
     .filter_module("html5ever", log::LevelFilter::Off)
@@ -39,6 +63,9 @@ async fn main() {
 
     // Get the feed urls file name
     let feeds_file = args.feeds_file;
+
+    // Get the report name
+    let report_name = args.report_name;
 
     // Get the output file name
     let output_file = args.output_file;
@@ -60,6 +87,9 @@ async fn main() {
         return;
     }
 
+    // Get the operator to use for filtering
+    let operator = args.operator;
+
     // Read the feed urls from the file
     let feed_urls = read_urls(&feeds_file);
     log::info!("Reading feed urls from the file: {}", feeds_file);
@@ -75,7 +105,7 @@ async fn main() {
     log::info!("Feed urls to read: {:?}", feed_urls);
 
     // Vector to store the items read from the feeds
-    let items = get_all_items(&mut feed_urls, max_threads, opt_in).await;
+    let items = fetch_news_items_opted_in(&mut feed_urls, max_threads, &opt_in, operator.as_wrapper()).await;
 
     // if we could read the items from the feeds
     if let Some(mut items) = items {
@@ -91,10 +121,17 @@ async fn main() {
             // Log clean news items to output file
             log_news_items_to_file(&clean_news_items, &output_file);
 
+            // Get the current date in the format YYYY-MM-DD-HH-MM-SS
+            let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
+
+            // Create the report db file name
+            let report_db_file = format!("{}_{}.db", report_name, current_date);
+
             // Store in the database
+            log::info!("Storing the news items in the database: {}", report_db_file);
 
             // Open a connection to the database
-            let connection = sqlite::open("hemeroteca.db").unwrap();
+            let connection = sqlite::open(report_db_file).unwrap();
 
             // Create the table
             NewsItem::create_table(&connection).unwrap();
@@ -103,7 +140,17 @@ async fn main() {
             let unique_inserted_items = insert_news_items(&clean_news_items, &connection);
             log::info!("Unique inserted items: {:?}", unique_inserted_items);
 
-            // Call summarize function
+            // Return the top K news items
+            let top_k = 10;
+            let top_news_items = top_k_news_items(top_k, &clean_news_items).await;
+
+            // Print the top news items
+            log::info!("Top {} news items:", top_k);
+            for (i, news_item) in top_news_items.iter().enumerate() {
+                log::info!("{}. {}", i + 1, news_item.title);
+            }
+
+            // // Call summarize function
             // let summary = summarize();
             // print!("Summary: {}", summary);
         }

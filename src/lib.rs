@@ -1,44 +1,43 @@
 //! Library that provides functions to read and parse RSS feeds
-//! 
 
 pub mod common;
-pub mod storage;
 pub mod openai;
 pub mod relevance;
+pub mod storage;
 
 // Re-export commonly used items in a prelude module
 pub mod prelude {
-    pub use crate::common::NewsItem;
+    pub use crate::clean_content;
     pub use crate::common::ChannelType;
-    pub use crate::common::PipelineError;
+    pub use crate::common::NewsItem;
     pub use crate::common::Operator;
+    pub use crate::common::PipelineError;
+    pub use crate::fetch_news_items_opted_in;
+    pub use crate::fill_news_item_content;
+    pub use crate::fill_news_items_with_clean_contents;
+    pub use crate::get_channel_type;
+    pub use crate::insert_news_items;
+    pub use crate::log_news_items_to_file;
+    pub use crate::log_news_items_to_db;
     pub use crate::openai::summarize;
-    pub use crate::relevance::calculate_relevance;
-    pub use crate::relevance::similar_to_root_word;
     pub use crate::read_feed;
     pub use crate::read_urls;
-    pub use crate::fetch_news_items_opted_in;
-    pub use crate::get_channel_type;
-    pub use crate::clean_content;
-    pub use crate::fill_news_item_content;
-    pub use crate::log_news_items_to_file;
-    pub use crate::fill_news_items_with_clean_contents;
-    pub use crate::insert_news_items;
+    pub use crate::relevance::calculate_relevance;
     pub use crate::top_k_news_items;
-    
+    pub use crate::update_news_items_with_relevance;
+    pub use crate::update_news_items_with_relevance_top_k;
 }
 
+use crate::relevance::calculate_relevance;
 use common::{ChannelType, NewsItem, Operator, PipelineError};
-use prelude::calculate_relevance;
-use tokio::task;
 
 use std::{
     error::Error,
     io::{BufRead, Cursor, Write},
 };
 
-use select::{document::Document, node};
 use select::predicate::Name;
+use select::{document::Document, node};
 
 use html2text::config;
 use rand::seq::SliceRandom;
@@ -89,7 +88,8 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
     Ok(urls)
 }
 
-/// Function that returns NewsItems from a vector of feed urls matching the categories or keywords passed as a reference
+/// Function that returns NewsItems from a vector of feed urls matching the
+/// categories or keywords passed as a reference
 pub async fn fetch_news_items_opted_in(
     feed_urls: &mut Vec<String>,
     max_threads: u8,
@@ -102,7 +102,8 @@ pub async fn fetch_news_items_opted_in(
         // Calculate the number of threads to spawn
         let threads = std::cmp::min(max_threads as usize, feed_urls.len());
 
-        // Spawn as many thread as the minimum of max number of threads and the number of urls and get the handles
+        // Spawn as many thread as the minimum of max number of threads and the number
+        // of urls and get the handles
         log::trace!("Spawning {} threads", threads);
         let mut handles = vec![];
         for _ in 0..threads {
@@ -130,7 +131,7 @@ pub async fn fetch_news_items_opted_in(
     }
 
     // Get the items from the channels
-    let items: Vec<(&str,Vec<Item>)> = channels
+    let items: Vec<(&str, Vec<Item>)> = channels
         .iter()
         .filter_map(|channel| {
             if let Some(channel) = channel {
@@ -166,26 +167,26 @@ pub async fn fetch_news_items_opted_in(
             })
             .flatten()
             .collect();
-        
 
-        // Retains the items that have any of the categories or keywords equal to the categories to opt in
+        // Retains the items that have any of the categories or keywords equal to the
+        // categories to opt in
         all_items.retain(|item| {
             let categories = item.categories.clone().unwrap_or("".to_string());
             let keywords = item.keywords.clone().unwrap_or("".to_string());
-            log::trace!(
-                "Checking {:?} in {:?} and {:?}",
-                opt_in,
-                categories,
-                keywords
-            );
+            log::trace!("Checking {:?} in {:?} and {:?}", opt_in, categories, keywords);
 
-            // Return true if all the opt_in items are in the categories or keywords
-            match operator {
-                Operator::AND => {
-                    opt_in.iter().all(|item| categories.contains(item) || keywords.contains(item))
-                }
-                Operator::OR => {
-                    opt_in.iter().any(|item| categories.contains(item) || keywords.contains(item))
+            // If the opt_in is empty, return true
+            if opt_in.is_empty() {
+                true
+            } else {
+                // Return true if all the opt_in items are in the categories or keywords
+                match operator {
+                    Operator::AND => opt_in
+                        .iter()
+                        .all(|item| categories.contains(item) || keywords.contains(item)),
+                    Operator::OR => opt_in
+                        .iter()
+                        .any(|item| categories.contains(item) || keywords.contains(item)),
                 }
             }
         });
@@ -197,9 +198,9 @@ pub async fn fetch_news_items_opted_in(
     }
 }
 
-// /// Function that using rqwest gets all the contents of all the urls of a vec of NewsItems passed as a reference
-// pub async fn get_all_contents(news_items: &Vec<NewsItem>) {
-//     let mut contents = Vec::new();
+// /// Function that using rqwest gets all the contents of all the urls of a vec
+// of NewsItems passed as a reference pub async fn get_all_contents(news_items:
+// &Vec<NewsItem>) {     let mut contents = Vec::new();
 //     for news_item in news_items {
 //         let response = reqwest::get(&news_item.link).await?;
 //         let content = response.text().await;
@@ -212,17 +213,17 @@ pub async fn fetch_news_items_opted_in(
 //                 news_item.link,
 //                 error
 //             );
-//             news_item.clean_content = Err(PipelineError::NetworkError(error));
-//         }
+//             news_item.clean_content =
+// Err(PipelineError::NetworkError(error));         }
 //     }
 // }
 
 /// Function that returns the channel given the channel name as a string
-/// 
+///
 /// Example:
 /// ```
 /// use hemeroteca::prelude::*;
-/// 
+///
 /// let channel = "EL PAÍS: el periódico global".to_string();
 /// let channel_type = get_channel_type(&channel);
 /// assert_eq!(channel_type, ChannelType::ElPais);
@@ -252,14 +253,14 @@ pub fn get_channel_type(channel: &String) -> ChannelType {
     }
 }
 
-
-/// Function that cleans the content of an html string depending on the feed it comes from
-/// 
+/// Function that cleans the content of an html string depending on the feed it
+/// comes from
+///
 /// Example:
-/// 
+///
 /// ```
 /// use hemeroteca::clean_content;
-/// 
+///
 /// let channel = "Otherl".to_string();
 /// let content = r#"
 /// <html>
@@ -322,7 +323,6 @@ pub fn clean_content(channel: &String, content: String) -> Result<String, Pipeli
                         extracted_html.push_str(&paragraph.html());
                     }
                 }
-                
             }
             ChannelType::ElDiario => {
                 log::trace!("Channel is ElDiario");
@@ -336,14 +336,12 @@ pub fn clean_content(channel: &String, content: String) -> Result<String, Pipeli
                             }
                         }
                     }
-                }
-                else {
+                } else {
                     // Extract the content from the body
                     log::trace!("No main found!!!");
                     if let Some(body) = document.find(Name("body")).next() {
                         extracted_html.push_str(&body.html());
                     }
-                
                 }
             }
             _ => {
@@ -360,16 +358,13 @@ pub fn clean_content(channel: &String, content: String) -> Result<String, Pipeli
         if let Ok(clean_text) = clean_result {
             Ok(clean_text)
         } else {
-            Err(PipelineError::ParsingError(
-                clean_result.err().unwrap().to_string(),
-            ))
+            Err(PipelineError::ParsingError(clean_result.err().unwrap().to_string()))
         }
     }
-    
 }
 
-
-/// Function that using rqwest gets the content of a NewsItem passed as a reference
+/// Function that using rqwest gets the content of a NewsItem passed as a
+/// reference
 pub async fn fill_news_item_content(news_item: &mut NewsItem) {
     let response = reqwest::get(&news_item.link).await;
     if let Ok(response) = response {
@@ -392,44 +387,29 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
                     }
                 }
                 Err(err) => {
-                    log::error!(
-                        "Could not clean the content from {}. ERROR: {:?}",
-                        news_item.link,
-                        err
-                    );
+                    log::error!("Could not clean the content from {}. ERROR: {:?}", news_item.link, err);
                     news_item.clean_content = None;
                     news_item.error = Some(err);
                 }
-                
             }
         } else {
             let error = content.err().unwrap().to_string();
-            log::error!(
-                "Could parse the content from {}. ERROR: {}",
-                news_item.link,
-                error
-            );
+            log::error!("Could parse the content from {}. ERROR: {}", news_item.link, error);
             news_item.clean_content = None;
             news_item.error = Some(PipelineError::ParsingError(error));
-        }    
+        }
     } else {
         let error = response.err().unwrap().to_string();
-        log::error!(
-            "Could not get the content from {}. ERROR: {}",
-            news_item.link,
-            error
-        );
+        log::error!("Could not get the content from {}. ERROR: {}", news_item.link, error);
         news_item.clean_content = None;
         news_item.error = Some(PipelineError::NetworkError(error));
     }
 }
 
-
-
 // /// Function that returns the top k news items from the database
-// pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<NewsItem> {
-//     // The top k news items are the ones with the highest relevance
-//     let mut news_items = news_items.clone();
+// pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) ->
+// Vec<NewsItem> {     // The top k news items are the ones with the highest
+// relevance     let mut news_items = news_items.clone();
 //     news_items.sort_by(|a, b| {
 //         let relevance_a = calculate_relevance(a);
 //         let relevance_b = calculate_relevance(b);
@@ -439,7 +419,7 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
 //     news_items.into_iter().take(top_k as usize).collect()
 // }
 
-/// Function that returns the top k news items from the database
+/// Function that returns the top k news items
 pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<NewsItem> {
     // The top k news items are the ones with the highest relevance
     let mut handles = Vec::new();
@@ -447,8 +427,8 @@ pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<News
     for item in news_items.iter() {
         let item = item.clone();
         // Spawn a blocking task for each relevance calculation
-        let handle = task::spawn_blocking(move || {
-            let relevance = calculate_relevance(&item);
+        let handle = tokio::spawn(async move {
+            let relevance = calculate_relevance(&item).await;
             (item, relevance)
         });
         handles.push(handle);
@@ -462,6 +442,7 @@ pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<News
     }
 
     // Sort items by relevance
+
     items_with_relevance.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Take the top k items
@@ -480,34 +461,57 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
         .open(file)
         .unwrap();
     for item in news_items {
-        writeln!(file, "=======================================================================").unwrap();
-        writeln!(file, "channel: {}", item.channel).unwrap();
-        writeln!(file, "title: {}", item.title).unwrap();
-        writeln!(file, "link: {}", item.link).unwrap();
-        writeln!(file, "description: {}", item.description).unwrap();
-        writeln!(file, "pub_date: {:?}", item.pub_date).unwrap();
-        writeln!(file, "categories: {:?}", item.categories).unwrap();
-        writeln!(file, "keywords: {:?}", item.keywords).unwrap();
+        writeln!(file,"---").unwrap();
+        writeln!(file, "# {}", item.title).unwrap();
+        writeln!(file, "## Data").unwrap();
+        writeln!(file, "- **Channel:** {}", item.channel).unwrap();
+        writeln!(file, "- **Relevance:** {}", item.relevance.unwrap_or_default()).unwrap();
+        writeln!(file, "- **Link:** {}", item.link).unwrap();
+        writeln!(file, "- **Publish Date:** {:?}", item.pub_date).unwrap();
+        writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
+        writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
+        writeln!(file, "- **Error:** {:?}", item.error).unwrap();
+        writeln!(file, "## Description\n{}", &item.description.chars().take(50).collect::<String>()).unwrap();
         match &item.clean_content {
             Some(clean_content) => {
-                writeln!(file, "clean_content: {}", clean_content).unwrap();
+                writeln!(file, "## Clean Content \n{}", clean_content).unwrap();
             }
             None => {
-                writeln!(file, "clean_content: N/A").unwrap();
+                writeln!(file, "## Clean Content \nN/A").unwrap();
             }
         }
-        writeln!(file, "error: {:?}", item.error).unwrap();
+        writeln!(file).unwrap();
+        
     }
+}
+
+/// Function that logs vector of NewsItems into a sqlite database
+pub fn log_news_items_to_db(news_items: &Vec<NewsItem>, db_file_name: &String) -> usize {
+    // Open a connection to the database
+    let connection = sqlite::open(db_file_name).unwrap();
+
+    // Create the table
+    NewsItem::create_table(&connection).unwrap();
+
+    // Insert the news items into the database
+    let unique_inserted_items = insert_news_items(&news_items, &connection);
+
+    unique_inserted_items
 }
 
 /// Function that inserts a vector of NewsItems into a database
 pub fn insert_news_items(news_items: &Vec<NewsItem>, connection: &sqlite::Connection) -> usize {
     let mut count = 0;
     for news_item in news_items {
-        match  news_item.insert(connection) {
+        match news_item.insert(connection) {
             Err(err) => {
-                log::error!("Could not insert the NewsItem -> channel: {} link: {}. ERROR: {}", news_item.channel, news_item.link, err.message.unwrap_or("no message".to_string()));
-            },
+                log::error!(
+                    "Could not insert the NewsItem -> channel: {} link: {}. ERROR: {}",
+                    news_item.channel,
+                    news_item.link,
+                    err.message.unwrap_or("no message".to_string())
+                );
+            }
             _ => {
                 count += 1;
             }
@@ -516,10 +520,11 @@ pub fn insert_news_items(news_items: &Vec<NewsItem>, connection: &sqlite::Connec
     count
 }
 
-/// Function that given a vector of NewsItems and the max number of threads to spawn, fills the clean_content field of the NewsItems
+/// Function that given a vector of NewsItems and the max number of threads to
+/// spawn, fills the clean_content field of the NewsItems
 pub async fn fill_news_items_with_clean_contents(
     news_items: &mut Vec<NewsItem>,
-    max_threads: u8
+    max_threads: u8,
 ) -> Option<Vec<NewsItem>> {
     let mut clean_news_items = Vec::new();
     // While there are contents to clean
@@ -527,7 +532,8 @@ pub async fn fill_news_items_with_clean_contents(
         // Calculate the number of threads to spawn
         let threads = std::cmp::min(max_threads as usize, news_items.len());
 
-        // Spawn as many thread as the minimum of max number of threads and the number of urls and get the handles
+        // Spawn as many thread as the minimum of max number of threads and the number
+        // of urls and get the handles
         log::trace!("Spawning {} threads", threads);
         let mut handles = vec![];
         for _ in 0..threads {
@@ -552,6 +558,79 @@ pub async fn fill_news_items_with_clean_contents(
     }
 }
 
+/// Function that given a vector of NewsItems and the max number of threads to
+/// spawn, calculates the relevance of each NewsItem and returns the updated
+/// vector of NewsItems
+pub async fn update_news_items_with_relevance(
+    news_items: &mut Vec<NewsItem>,
+    max_threads: u8,
+) -> Option<Vec<NewsItem>> {
+    log::info!("Updating relevance with {} threads", max_threads);
+    let mut updated_news_items = Vec::new();
+    // While there are news items to update
+    while !news_items.is_empty() {
+        // Calculate the number of threads to spawn
+        let threads = std::cmp::min(max_threads as usize, news_items.len());
+
+        // Spawn as many thread as the minimum of max number of threads and the number
+        // of urls and get the handles
+        let mut handles = vec![];
+        for _ in 0..threads {
+            let mut news_item = news_items.pop().unwrap();
+            let handle = tokio::spawn(async move {
+                let relevance = calculate_relevance(&news_item).await;
+                log::debug!("Relevance of {} is {}", news_item.title, relevance.to_string());
+                news_item.relevance = Some(relevance.net_relevance());
+                news_item
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all the threads to finish
+        for handle in handles {
+            updated_news_items.push(handle.await.unwrap());
+        }
+    }
+
+    if updated_news_items.is_empty() {
+        None
+    } else {
+        Some(updated_news_items)
+    }
+}
+
+// Function that updates the news items with the calculated relevance and
+// returns the top k items
+pub async fn update_news_items_with_relevance_top_k(
+    items: &mut Vec<NewsItem>,
+    max_threads: u8,
+    k: usize,
+) -> Vec<NewsItem> {
+    // Start time
+    let start = std::time::Instant::now();
+
+    // Update all the items with the calculated relevance
+    let mut updated_items = update_news_items_with_relevance(items, max_threads)
+        .await
+        .expect("Should not happen");
+
+    log::info!(
+        "Items updated {} in {} secs",
+        updated_items.len(),
+        start.elapsed().as_secs()
+    );
+
+    // Order updated items by relevance and take the top 100
+    updated_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+
+    // Take the top k items
+    let top_k_items = updated_items.into_iter().take(k).collect::<Vec<NewsItem>>();
+
+    log::info!("Top K items: {}", top_k_items.len());
+
+    top_k_items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,7 +648,8 @@ mod tests {
     }
 
     // This test checks that the function read_urls reads the urls from a file
-    // It creates a file with 3 urls and checks that the function reads them correctly
+    // It creates a file with 3 urls and checks that the function reads them
+    // correctly
     #[test]
     fn test_read_urls() {
         // Write three urls to a file
@@ -589,7 +669,8 @@ mod tests {
     }
 
     // This test checks that from_item creates a NewsItem from an RSS Item
-    // It creates an RSS Item and checks that the function creates a NewsItem with the correct values
+    // It creates an RSS Item and checks that the function creates a NewsItem with
+    // the correct values
     #[test]
     fn test_from_item() {
         // Create an RSS media extension for keywords using the ExtensionBuilder
@@ -611,9 +692,7 @@ mod tests {
         // Create a test Item with title, link, description and categories
         let item = rss::ItemBuilder::default()
             .title(Some("Title 1".to_string()))
-            .link(Some(
-                "https://www.acme.es/section/uri-to-item.html".to_string(),
-            ))
+            .link(Some("https://www.acme.es/section/uri-to-item.html".to_string()))
             .description(Some("Description".to_string()))
             .categories(vec![category1.clone(), category2.clone()])
             .extensions(extensions)
@@ -631,10 +710,7 @@ mod tests {
 
         let news_item = NewsItem::from_item(&channel.title(), &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(
-            news_item.link,
-            "https://www.acme.es/section/uri-to-item.html"
-        );
+        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,
@@ -646,7 +722,8 @@ mod tests {
         );
     }
 
-    // This test checks that an Item without the media:keywords extension is correctly converted to a NewsItem
+    // This test checks that an Item without the media:keywords extension is
+    // correctly converted to a NewsItem
     #[test]
     fn test_from_item_no_keywords() {
         // Create a couple of test categories
@@ -656,19 +733,14 @@ mod tests {
         // Create a test Item with title, link, description and categories
         let item = rss::ItemBuilder::default()
             .title(Some("Title 1".to_string()))
-            .link(Some(
-                "https://www.acme.es/section/uri-to-item.html".to_string(),
-            ))
+            .link(Some("https://www.acme.es/section/uri-to-item.html".to_string()))
             .description(Some("Description".to_string()))
             .categories(vec![category1.clone(), category2.clone()])
             .build();
 
         let news_item = NewsItem::from_item("Other", &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(
-            news_item.link,
-            "https://www.acme.es/section/uri-to-item.html"
-        );
+        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,
@@ -677,30 +749,27 @@ mod tests {
         assert_eq!(news_item.keywords, None);
     }
 
-    // This test checks that an Item without the categories is correctly converted to a NewsItem
+    // This test checks that an Item without the categories is correctly converted
+    // to a NewsItem
     #[test]
     fn test_from_item_no_categories() {
         // Create a test Item with title, link, description and categories
         let item = rss::ItemBuilder::default()
             .title(Some("Title 1".to_string()))
-            .link(Some(
-                "https://www.acme.es/section/uri-to-item.html".to_string(),
-            ))
+            .link(Some("https://www.acme.es/section/uri-to-item.html".to_string()))
             .description(Some("Description".to_string()))
             .build();
 
         let news_item = NewsItem::from_item("Other", &item).unwrap();
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(
-            news_item.link,
-            "https://www.acme.es/section/uri-to-item.html"
-        );
+        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
         assert_eq!(news_item.description, "Description");
         assert_eq!(news_item.categories, None);
         assert_eq!(news_item.keywords, None);
     }
 
-    // This test checks that an Item without title, link or description fails to convert to a NewsItem
+    // This test checks that an Item without title, link or description fails to
+    // convert to a NewsItem
     #[test]
     fn test_from_item_no_title_link_description() {
         // Create a test Item with title, link, description and categories
@@ -729,10 +798,7 @@ mod tests {
         log::trace!("NewsItem: {:?}", news_item);
 
         assert_eq!(news_item.title, "Title 1");
-        assert_eq!(
-            news_item.link,
-            "https://www.acme.es/section/uri-to-item.html"
-        );
+        assert_eq!(news_item.link, "https://www.acme.es/section/uri-to-item.html");
         assert_eq!(news_item.description, "Description");
         assert_eq!(
             news_item.categories,

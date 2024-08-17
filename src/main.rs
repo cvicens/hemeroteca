@@ -1,4 +1,3 @@
-
 use hemeroteca::prelude::*;
 
 use clap::{Parser, ValueEnum};
@@ -33,10 +32,6 @@ struct Args {
     #[arg(long, default_value = "hemeroteca")]
     report_name: String,
 
-    /// File to output the news items
-    #[arg(long, default_value = "output.txt")]
-    output_file: String,
-
     /// Threads used to parse the feeds
     #[arg(short, long, default_value = "4")]
     threads: u8,
@@ -55,8 +50,8 @@ async fn main() {
     // Initialize the logger and turn off html5ever logs
     // env_logger::init();
     env_logger::Builder::from_env(Env::default())
-    .filter_module("html5ever", log::LevelFilter::Off)
-    .init();
+        .filter_module("html5ever", log::LevelFilter::Off)
+        .init();
 
     // Read the 'feeds_file' argument using clap
     let args: Args = Args::parse();
@@ -66,9 +61,6 @@ async fn main() {
 
     // Get the report name
     let report_name = args.report_name;
-
-    // Get the output file name
-    let output_file = args.output_file;
 
     // Get the number of threads
     let max_threads = args.threads;
@@ -83,8 +75,7 @@ async fn main() {
 
     // If no opt_in is provided, print a warning and exit
     if opt_in.is_empty() {
-        log::error!("No categories provided to filter out. Exiting...");
-        return;
+        log::info!("No categories provided to filter out. Getting all the news items from feeds.");
     }
 
     // Get the operator to use for filtering
@@ -111,15 +102,15 @@ async fn main() {
     if let Some(mut items) = items {
         log::info!("Items read from the feeds: {:?}", items.len());
 
+        // Update all the items with the calculated relevance and return the top k items
+        let mut top_k_items = update_news_items_with_relevance_top_k(&mut items, max_threads, 100).await;
+
         // Fill the news items with clean contents
-        let clean_news_items = fill_news_items_with_clean_contents(&mut items, max_threads).await;
+        let clean_news_items = fill_news_items_with_clean_contents(&mut top_k_items, max_threads).await;
 
-        // Write intermidiate results to the file
-        if let Some(clean_news_items) = clean_news_items {
+        // Write intermediate results to the file
+        if let Some(mut clean_news_items) = clean_news_items {
             log::info!("Clean news items: {:?}", clean_news_items.len());
-
-            // Log clean news items to output file
-            log_news_items_to_file(&clean_news_items, &output_file);
 
             // Get the current date in the format YYYY-MM-DD-HH-MM-SS
             let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
@@ -127,34 +118,36 @@ async fn main() {
             // Create the report db file name
             let report_db_file = format!("{}_{}.db", report_name, current_date);
 
-            // Store in the database
-            log::info!("Storing the news items in the database: {}", report_db_file);
+            // Create the log file name
+            let report_log_file = format!("{}_{}.txt", report_name, current_date);
 
-            // Open a connection to the database
-            let connection = sqlite::open(report_db_file).unwrap();
+            // Logging to file
+            log::info!("Logging to the report log file: {}", report_log_file);
 
-            // Create the table
-            NewsItem::create_table(&connection).unwrap();
+            // Log clean news items to output file
+            log_news_items_to_file(&clean_news_items, &report_log_file);
+
+            // Logging to file
+            log::info!("Logging to the report log database: {}", report_db_file);
 
             // Insert the news items into the database
-            let unique_inserted_items = insert_news_items(&clean_news_items, &connection);
+            let unique_inserted_items = log_news_items_to_db(&clean_news_items, &report_db_file);
             log::info!("Unique inserted items: {:?}", unique_inserted_items);
 
-            // Return the top K news items
-            let top_k = 10;
-            let top_news_items = top_k_news_items(top_k, &clean_news_items).await;
+            // Now that the contents are present and clean pdate again all the items with the calculated relevance 
+            // and return the top k items
+            let top_k_items = update_news_items_with_relevance_top_k(&mut clean_news_items, max_threads, 10).await;
 
             // Print the top news items
-            log::info!("Top {} news items:", top_k);
-            for (i, news_item) in top_news_items.iter().enumerate() {
-                log::info!("{}. {}", i + 1, news_item.title);
+            log::info!("Top {} news items:", top_k_items.len());
+            for (i, news_item) in top_k_items.iter().enumerate() {
+                log::info!("{}. ({})  {}", i + 1, news_item.relevance.unwrap_or_default(), news_item.title);
             }
 
             // // Call summarize function
             // let summary = summarize();
             // print!("Summary: {}", summary);
-        }
-        else {
+        } else {
             log::error!("No news items survived the cleaning phase! Exiting...");
         }
     }

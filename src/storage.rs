@@ -1,19 +1,17 @@
 /// Module for storage related functions
-/// 
-
 use crate::common::{NewsItem, PipelineError};
 
 use sqlite::{Connection, State};
 
 impl NewsItem {
-
-    /// Function that returns a Bindable slice of tuples with the values of the NewsItem
-    /// 
+    /// Function that returns a Bindable slice of tuples with the values of the
+    /// NewsItem
+    ///
     /// Example:
-    /// 
+    ///
     /// ```
     /// use hemeroteca::prelude::*;
-    /// 
+    ///
     /// let news_item = NewsItem {
     ///    channel: "Channel".to_string(),
     ///    title: "Title".to_string(),
@@ -23,9 +21,11 @@ impl NewsItem {
     ///    categories: Some("Categories".to_string()),
     ///    keywords: Some("Keywords".to_string()),
     ///    clean_content: Some("Clean Content".to_string()),
+    ///    creators: "John Doe".to_string(),
     ///    error: None,
+    ///    relevance: None,
     /// };
-    /// 
+    ///
     /// let binds = news_item.binds();
     /// assert_eq!(binds.len(), 10);
     /// ```
@@ -64,7 +64,6 @@ impl NewsItem {
             (":clean_content", clean_content),
             (":error", error),
         ]
-        
     }
 
     /// Function that create a table in the database to store the news items
@@ -72,7 +71,7 @@ impl NewsItem {
     /// Example:
     /// ```
     /// use hemeroteca::prelude::*;
-    /// 
+    ///
     /// let conn = sqlite::open(":memory:").unwrap();
     /// let result = NewsItem::create_table(&conn);
     /// assert_eq!(result.is_ok(), true);
@@ -103,7 +102,7 @@ impl NewsItem {
         )?;
         // Bind the values
         statement.bind(&self.binds()[..])?;
-    
+
         statement.next()?; // Execute the statement
         Ok(())
     }
@@ -123,7 +122,7 @@ impl NewsItem {
             let pub_date: Option<String> = statement.read::<Option<String>, _>(5)?;
             let categories: Option<String> = statement.read::<Option<String>, _>(6)?;
             let keywords: Option<String> = statement.read::<Option<String>, _>(7)?;
-            let clean_content: Option<String> = statement.read::<Option<String>, _ >(8)?;
+            let clean_content: Option<String> = statement.read::<Option<String>, _>(8)?;
             let error: Option<String> = statement.read::<Option<String>, _>(9)?;
 
             let error = match error {
@@ -133,7 +132,6 @@ impl NewsItem {
                         Ok(e) => Some(e),
                         Err(_) => Some(PipelineError::UnknownError),
                     },
-                    
                 },
                 None => None,
             };
@@ -149,6 +147,7 @@ impl NewsItem {
                 keywords,
                 clean_content,
                 error,
+                relevance: None,
             });
         }
         Ok(news_items)

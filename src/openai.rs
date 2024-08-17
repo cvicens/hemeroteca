@@ -1,20 +1,8 @@
 use serde_json::json;
 
 /// Module for OpenAI related functions
-/// 
 
 /// Function that given a text returns a summary
-/// 
-/// Example:
-/// 
-/// ```
-/// use hemeroteca::prelude::*;
-/// 
-/// let text = "The quick brown fox jumps over the lazy dog";
-/// let api_key = "your-api-key";
-/// let summary = summarize(text, api_key);
-/// println!("Summary: {}", summary);
-/// ```
 pub async fn summarize(text: &str, api_key: &str) -> Result<String, reqwest::Error> {
     let client = reqwest::Client::new();
 

@@ -1,5 +1,4 @@
 /// Common types and utilities used across the library
-
 use std::error::Error;
 
 // OptInOperator enum
@@ -31,6 +30,7 @@ pub struct NewsItem {
     pub keywords: Option<String>,
     pub clean_content: Option<String>,
     pub error: Option<PipelineError>,
+    pub relevance: Option<u64>,
 }
 
 // Define a custom error type for the pipeline
@@ -54,8 +54,8 @@ impl Default for PipelineError {
 impl PipelineError {
     /// Function that returns PipelineError from a &str
     pub fn from_str(error: &str) -> Result<Self, Box<dyn Error>> {
-        // Match error by using a regex pattern: 
-        // - ParsingError(.*) => ParsingError 
+        // Match error by using a regex pattern:
+        // - ParsingError(.*) => ParsingError
         // - NetworkError(.*) => NetworkError
         // - EmptyString
         // - NoContent
@@ -98,7 +98,8 @@ impl PipelineError {
 }
 
 impl NewsItem {
-    /// Function that creates a NewsItem from an RSS Item and returns a Result or Error
+    /// Function that creates a NewsItem from an RSS Item and returns a Result
+    /// or Error
     ///
     /// Example:
     /// ```
@@ -159,16 +160,17 @@ impl NewsItem {
             keywords,
             clean_content: None,
             error: None,
+            relevance: None,
         })
     }
 }
 
 // /// Function that returns a String given an Option<PipelineError>
-// /// 
+// ///
 // /// Example:
 // /// ```
 // /// use hemeroteca::prelude::*;
-// /// 
+// ///
 // /// let error = PipelineError::EmptyString;
 // /// let error_str = error_to_string(&error);
 // /// assert_eq!(error_str, "EmptyString");
@@ -176,10 +178,10 @@ impl NewsItem {
 // pub fn error_to_string(error: &Option<PipelineError>) -> String {
 //     match error {
 //         Some(PipelineError::EmptyString) => "EmptyString".to_string(),
-//         Some(PipelineError::ParsingError(msg)) => format!("ParsingError: {}", msg),
-//         Some(PipelineError::NoContent) => "NoContent".to_string(),
-//         Some(PipelineError::NetworkError(msg)) => format!("NetworkError: {}", msg),
-//         Some(PipelineError::UnknownError) => "UnknownError".to_string(),
-//         None => "None".to_string(),
+//         Some(PipelineError::ParsingError(msg)) => format!("ParsingError: {}",
+// msg),         Some(PipelineError::NoContent) => "NoContent".to_string(),
+//         Some(PipelineError::NetworkError(msg)) => format!("NetworkError: {}",
+// msg),         Some(PipelineError::UnknownError) =>
+// "UnknownError".to_string(),         None => "None".to_string(),
 //     }
 // }

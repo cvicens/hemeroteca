@@ -14,6 +14,7 @@ pub enum ChannelType {
     ElPais,
     VeinteMinutos,
     ElDiario,
+    ElMundo,
     Other,
 }
 

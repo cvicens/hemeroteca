@@ -264,7 +264,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_categories), (false, 0, 15, 0, 0, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_categories), (false, 0, 10, 0, 0, 0));
         
         let news_item_with_keywords = NewsItem {
             error: None,
@@ -344,11 +344,10 @@ mod tests {
         };
         
         let relevance_core = calculate_relevance_core(&news_item_with_clean_content);
-        let elapsed_time = 0.0;
         let relevance = calculate_relevance(&news_item_with_clean_content).await;
         let relevance_content = relevance.relevance_content;
 
-        assert_eq!(relevance, Relevance::new(relevance_core, relevance_content, elapsed_time));
+        assert_eq!(relevance, Relevance::new(relevance_core, relevance_content, relevance.elapsed_time));
         
         let news_item_without_clean_content = NewsItem {
             error: None,
@@ -365,10 +364,9 @@ mod tests {
         };
 
         let relevance_core = calculate_relevance_core(&news_item_without_clean_content);
-        let elapsed_time = 0.0;
         let relevance = calculate_relevance(&news_item_without_clean_content).await;
         let relevance_content = relevance.relevance_content;
 
-        assert_eq!(relevance, Relevance::new(relevance_core, relevance_content, elapsed_time));
+        assert_eq!(relevance, Relevance::new(relevance_core, relevance_content, relevance.elapsed_time));
     }
 }

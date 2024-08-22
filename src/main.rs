@@ -96,17 +96,17 @@ async fn main() {
     log::info!("Feed urls to read: {:?}", feed_urls);
 
     // Vector to store the items read from the feeds
-    let items = fetch_news_items_opted_in(&mut feed_urls, max_threads, &opt_in, operator.as_wrapper()).await;
+    let items = fetch_news_items_opted_in(&mut feed_urls, &opt_in, operator.as_wrapper()).await;
 
     // if we could read the items from the feeds
     if let Some(mut items) = items {
         log::info!("Items read from the feeds: {:?}", items.len());
 
         // Update all the items with the calculated relevance and return the top k items
-        let mut top_k_items = update_news_items_with_relevance_top_k(&mut items, max_threads, 100).await;
+        let mut top_k_items = update_news_items_with_relevance_top_k(&mut items, 100).await;
 
         // Fill the news items with clean contents
-        let clean_news_items = fill_news_items_with_clean_contents(&mut top_k_items, max_threads).await;
+        let clean_news_items = fill_news_items_with_clean_contents(&mut top_k_items).await;
 
         // Write intermediate results to the file
         if let Some(mut clean_news_items) = clean_news_items {
@@ -119,7 +119,7 @@ async fn main() {
             let report_db_file = format!("{}_{}.db", report_name, current_date);
 
             // Create the log file name
-            let report_log_file = format!("{}_{}.txt", report_name, current_date);
+            let report_log_file = format!("{}_{}.md", report_name, current_date);
 
             // Logging to file
             log::info!("Logging to the report log file: {}", report_log_file);
@@ -136,17 +136,15 @@ async fn main() {
 
             // Now that the contents are present and clean pdate again all the items with the calculated relevance 
             // and return the top k items
-            let top_k_items = update_news_items_with_relevance_top_k(&mut clean_news_items, max_threads, 10).await;
+            let top_k_items = update_news_items_with_relevance_top_k(&mut clean_news_items, 20).await;
 
-            // Print the top news items
-            log::info!("Top {} news items:", top_k_items.len());
-            for (i, news_item) in top_k_items.iter().enumerate() {
-                log::info!("{}. ({})  {}", i + 1, news_item.relevance.unwrap_or_default(), news_item.title);
-            }
+            
+            // Create the dossier file name
+            let dossier_file = format!("dossier-{}_{}.md", report_name, current_date);
 
-            // // Call summarize function
-            // let summary = summarize();
-            // print!("Summary: {}", summary);
+            // Generate the dossier with the top k items
+            generate_dossier(&top_k_items, &dossier_file);
+            
         } else {
             log::error!("No news items survived the cleaning phase! Exiting...");
         }

@@ -11,3 +11,6 @@ Several NLP techniques can be applied to rank articles based on their importance
 - Document Similarity: Calculate the similarity between articles using techniques like cosine similarity or Jaccard similarity. Articles similar to already popular or highly ranked articles might also be considered important.
 - Readability Analysis: Assess the readability of articles using metrics like Flesch-Kincaid Grade Level or Coleman-Liau Index. Articles with clear and understandable language might be preferred and ranked higher.
 - Dependency Parsing: Analyze the syntactic structure of sentences to extract relationships between words. This can help identify important phrases or concepts within the articles.
+
+
+https://github.com/lycheeverse/lychee/blob/master/lychee-bin/src/main.rs

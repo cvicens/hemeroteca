@@ -25,3 +25,11 @@ lint: ## Run the linter
 	@rustup component add clippy
 	cargo clippy
 
+doc: ## Generate the documentation
+	cargo doc --no-deps --document-private-items
+
+TARGET := target/release/$(shell basename $(shell pwd))
+release: ## Build the project in release mode
+	cargo build --release
+	@echo "Binary is located at $(TARGET)"
+

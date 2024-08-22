@@ -19,6 +19,7 @@ pub mod prelude {
     pub use crate::insert_news_items;
     pub use crate::log_news_items_to_file;
     pub use crate::log_news_items_to_db;
+    pub use crate::generate_dossier;
     pub use crate::openai::summarize;
     pub use crate::read_feed;
     pub use crate::read_urls;
@@ -92,42 +93,39 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
 /// categories or keywords passed as a reference
 pub async fn fetch_news_items_opted_in(
     feed_urls: &mut Vec<String>,
-    max_threads: u8,
     opt_in: &Vec<String>,
     operator: Operator,
 ) -> Option<Vec<NewsItem>> {
     let mut channels = Vec::new();
-    // While there are urls to read
-    while !feed_urls.is_empty() {
-        // Calculate the number of threads to spawn
-        let threads = std::cmp::min(max_threads as usize, feed_urls.len());
 
-        // Spawn as many thread as the minimum of max number of threads and the number
-        // of urls and get the handles
-        log::trace!("Spawning {} threads", threads);
-        let mut handles = vec![];
-        for _ in 0..threads {
-            let url = feed_urls.pop().unwrap();
-            let handle = tokio::spawn(async move {
-                let channel = read_feed(&url).await;
-                if channel.is_err() {
-                    log::error!(
-                        "Could not read the feed from {}. ERROR: {}",
-                        url,
-                        channel.err().unwrap()
-                    );
-                    None
-                } else {
-                    Some(channel.unwrap())
-                }
-            });
-            handles.push(handle);
-        }
+    // Calculate the number of tasks to spawn
+    let tasks = feed_urls.len();
 
-        // Wait for all the threads to finish
-        for handle in handles {
-            channels.push(handle.await.unwrap());
-        }
+    // Spawn as many thread as the minimum of max number of threads and the number
+    // of urls and get the handles
+    log::trace!("Spawning {} tasks", tasks);
+    let mut handles = vec![];
+    for _ in 0..tasks {
+        let url = feed_urls.pop().unwrap();
+        let handle = tokio::spawn(async move {
+            let channel = read_feed(&url).await;
+            if channel.is_err() {
+                log::error!(
+                    "Could not read the feed from {}. ERROR: {}",
+                    url,
+                    channel.err().unwrap()
+                );
+                None
+            } else {
+                Some(channel.unwrap())
+            }
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all the threads to finish
+    for handle in handles {
+        channels.push(handle.await.unwrap());
     }
 
     // Get the items from the channels
@@ -247,6 +245,9 @@ pub fn get_channel_type(channel: &String) -> ChannelType {
     // If channel in uppercase starts with "EL DIARIO" return ElDiario
     } else if channel.to_uppercase().contains("ELDIARIO.ES") {
         ChannelType::ElDiario
+    // If channel in uppercase starts with "ELMUNDO" return ElMundo
+    } else if channel.to_uppercase().contains("ELMUNDO") {
+        ChannelType::ElMundo
     // Otherwise return Other
     } else {
         ChannelType::Other
@@ -261,7 +262,7 @@ pub fn get_channel_type(channel: &String) -> ChannelType {
 /// ```
 /// use hemeroteca::clean_content;
 ///
-/// let channel = "Otherl".to_string();
+/// let channel = "Other".to_string();
 /// let content = r#"
 /// <html>
 ///    <head><title>Example Page</title></head>
@@ -339,6 +340,20 @@ pub fn clean_content(channel: &String, content: String) -> Result<String, Pipeli
                 } else {
                     // Extract the content from the body
                     log::trace!("No main found!!!");
+                    if let Some(body) = document.find(Name("body")).next() {
+                        extracted_html.push_str(&body.html());
+                    }
+                }
+            }
+            ChannelType::ElMundo => {
+                // Extract the content from the article
+                if let Some(article) = document.find(Name("article")).next() {
+                    for paragraph in article.find(Name("p")) {
+                        extracted_html.push_str(&paragraph.html());
+                    }
+                } else {
+                    // Extract the content from the body
+                    log::trace!("No article found!!!");
                     if let Some(body) = document.find(Name("body")).next() {
                         extracted_html.push_str(&body.html());
                     }
@@ -460,6 +475,18 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
         .append(true)
         .open(file)
         .unwrap();
+
+    // Order the news items by relevance
+    let mut news_items = news_items.clone();
+    news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+
+    // Write table of contents
+    writeln!(file, "# Table of Contents").unwrap();
+    for (i,item) in news_items.iter().enumerate() {
+        writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
+    }
+    writeln!(file).unwrap();
+
     for item in news_items {
         writeln!(file,"---").unwrap();
         writeln!(file, "# {}", item.title).unwrap();
@@ -478,6 +505,78 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
             }
             None => {
                 writeln!(file, "## Clean Content \nN/A").unwrap();
+            }
+        }
+        writeln!(file).unwrap();
+        
+    }
+}
+
+/// Function that generates an anchor from a title
+fn generate_anchor(title: &str) -> String {
+    // Convert to lowercase
+    let mut anchor = title.to_lowercase();
+    // Transliterate to ASCII
+    // anchor = deunicode(&anchor);
+    // Replace non-alphanumeric characters with hyphens
+    let re = Regex::new(r"[^a-z0-9]+").unwrap();
+    anchor = re.replace_all(&anchor, "-").to_string();
+    // Trim leading and trailing hyphens
+    anchor = anchor.trim_matches('-').to_string();
+    format!("#{}", anchor)
+}
+
+/// Function that generates a dossier with a vector of news items
+pub fn generate_dossier(news_items: &Vec<NewsItem>, file: &str) {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .unwrap();
+
+    // Header of the dossier
+    writeln!(file, "# Dossier").unwrap();
+
+    // Write table of contents
+    writeln!(file, "## Table of Contents").unwrap();
+    for (i,item) in news_items.iter().enumerate() {
+        writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
+    }
+    writeln!(file).unwrap();
+
+    // Write metadata of the dossier
+    writeln!(file, "## Metadata").unwrap();
+    writeln!(file, "- **Number of items:** {}", news_items.len()).unwrap();
+    writeln!(file, "- **Date:** {:?}", chrono::Local::now()).unwrap();
+    writeln!(file).unwrap();
+
+    // Write the news items
+    writeln!(file, "## News Items").unwrap();
+
+    for item in news_items {
+        writeln!(file,"---").unwrap();
+        writeln!(file, "### {}", item.title).unwrap();
+        writeln!(file).unwrap();
+
+        writeln!(file, "#### Data").unwrap();
+        writeln!(file, "- **Channel:** {}", item.channel).unwrap();
+        writeln!(file, "- **Relevance:** {}", item.relevance.unwrap_or_default()).unwrap();
+        writeln!(file, "- **Link:** {}", item.link).unwrap();
+        writeln!(file, "- **Publish Date:** {:?}", item.pub_date).unwrap();
+        writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
+        writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
+        writeln!(file, "- **Error:** {:?}", item.error).unwrap();
+        writeln!(file).unwrap();
+        
+        // writeln!(file, "#### Description\n{}", &item.description).unwrap();
+        // writeln!(file).unwrap();
+
+        match &item.clean_content {
+            Some(clean_content) => {
+                writeln!(file, "#### Clean Content \n{}", clean_content).unwrap();
+            }
+            None => {
+                writeln!(file, "#### Clean Content \nN/A").unwrap();
             }
         }
         writeln!(file).unwrap();
@@ -520,36 +619,32 @@ pub fn insert_news_items(news_items: &Vec<NewsItem>, connection: &sqlite::Connec
     count
 }
 
-/// Function that given a vector of NewsItems and the max number of threads to
-/// spawn, fills the clean_content field of the NewsItems
+/// Function that given a vector of NewsItems fills the clean_content field of all of them
 pub async fn fill_news_items_with_clean_contents(
     news_items: &mut Vec<NewsItem>,
-    max_threads: u8,
 ) -> Option<Vec<NewsItem>> {
     let mut clean_news_items = Vec::new();
-    // While there are contents to clean
-    while !news_items.is_empty() {
-        // Calculate the number of threads to spawn
-        let threads = std::cmp::min(max_threads as usize, news_items.len());
 
-        // Spawn as many thread as the minimum of max number of threads and the number
-        // of urls and get the handles
-        log::trace!("Spawning {} threads", threads);
-        let mut handles = vec![];
-        for _ in 0..threads {
-            let mut news_item = news_items.pop().unwrap();
-            let handle = tokio::spawn(async move {
-                fill_news_item_content(&mut news_item).await;
-                news_item
-            });
-            handles.push(handle);
-        }
+    // Calculate the number of tasks to spawn
+    let tasks = news_items.len();
 
-        // Wait for all the threads to finish
-        for handle in handles {
-            clean_news_items.push(handle.await.unwrap());
-        }
+    log::trace!("Spawning {} tasks", tasks);
+
+    let mut handles = vec![];
+    for _ in 0..tasks {
+        let mut news_item = news_items.pop().unwrap();
+        let handle = tokio::spawn(async move {
+            fill_news_item_content(&mut news_item).await;
+            news_item
+        });
+        handles.push(handle);
     }
+
+    // Wait for all the tasks to finish
+    for handle in handles {
+        clean_news_items.push(handle.await.unwrap());
+    }
+    
 
     if clean_news_items.is_empty() {
         None
@@ -563,33 +658,30 @@ pub async fn fill_news_items_with_clean_contents(
 /// vector of NewsItems
 pub async fn update_news_items_with_relevance(
     news_items: &mut Vec<NewsItem>,
-    max_threads: u8,
 ) -> Option<Vec<NewsItem>> {
-    log::info!("Updating relevance with {} threads", max_threads);
+    log::info!("Updating relevance of {} news items", news_items.len());
     let mut updated_news_items = Vec::new();
-    // While there are news items to update
-    while !news_items.is_empty() {
-        // Calculate the number of threads to spawn
-        let threads = std::cmp::min(max_threads as usize, news_items.len());
 
-        // Spawn as many thread as the minimum of max number of threads and the number
-        // of urls and get the handles
-        let mut handles = vec![];
-        for _ in 0..threads {
-            let mut news_item = news_items.pop().unwrap();
-            let handle = tokio::spawn(async move {
-                let relevance = calculate_relevance(&news_item).await;
-                log::debug!("Relevance of {} is {}", news_item.title, relevance.to_string());
-                news_item.relevance = Some(relevance.net_relevance());
-                news_item
-            });
-            handles.push(handle);
-        }
+    // Calculate the number of tasks to spawn
+    let tasks = news_items.len();
 
-        // Wait for all the threads to finish
-        for handle in handles {
-            updated_news_items.push(handle.await.unwrap());
-        }
+    // Spawn as many thread as the minimum of max number of threads and the number
+    // of urls and get the handles
+    let mut handles = vec![];
+    for _ in 0..tasks {
+        let mut news_item = news_items.pop().unwrap();
+        let handle = tokio::spawn(async move {
+            let relevance = calculate_relevance(&news_item).await;
+            log::debug!("Relevance of {} is {}", news_item.title, relevance.to_string());
+            news_item.relevance = Some(relevance.net_relevance());
+            news_item
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all the tasks to finish
+    for handle in handles {
+        updated_news_items.push(handle.await.unwrap());
     }
 
     if updated_news_items.is_empty() {
@@ -603,14 +695,13 @@ pub async fn update_news_items_with_relevance(
 // returns the top k items
 pub async fn update_news_items_with_relevance_top_k(
     items: &mut Vec<NewsItem>,
-    max_threads: u8,
     k: usize,
 ) -> Vec<NewsItem> {
     // Start time
     let start = std::time::Instant::now();
 
     // Update all the items with the calculated relevance
-    let mut updated_items = update_news_items_with_relevance(items, max_threads)
+    let mut updated_items = update_news_items_with_relevance(items)
         .await
         .expect("Should not happen");
 

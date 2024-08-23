@@ -6,3 +6,4 @@ example.*
 output.txt
 *.db
 *.log
+report_*

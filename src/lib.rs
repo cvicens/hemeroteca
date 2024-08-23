@@ -92,21 +92,18 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
 /// Function that returns NewsItems from a vector of feed urls matching the
 /// categories or keywords passed as a reference
 pub async fn fetch_news_items_opted_in(
-    feed_urls: &mut Vec<String>,
+    feed_urls: &Vec<String>,
     opt_in: &Vec<String>,
     operator: Operator,
 ) -> Option<Vec<NewsItem>> {
     let mut channels = Vec::new();
 
-    // Calculate the number of tasks to spawn
-    let tasks = feed_urls.len();
-
     // Spawn as many thread as the minimum of max number of threads and the number
     // of urls and get the handles
-    log::trace!("Spawning {} tasks", tasks);
+    // log::trace!("Spawning {} tasks", feed_urls.len());
     let mut handles = vec![];
-    for _ in 0..tasks {
-        let url = feed_urls.pop().unwrap();
+    for url in feed_urls.iter() {
+        let url = url.clone();
         let handle = tokio::spawn(async move {
             let channel = read_feed(&url).await;
             if channel.is_err() {
@@ -585,7 +582,7 @@ pub fn generate_dossier(news_items: &Vec<NewsItem>, file: &str) {
 }
 
 /// Function that logs vector of NewsItems into a sqlite database
-pub fn log_news_items_to_db(news_items: &Vec<NewsItem>, db_file_name: &String) -> usize {
+pub async fn log_news_items_to_db(news_items: &Vec<NewsItem>, db_file_name: &str) -> usize {
     // Open a connection to the database
     let connection = sqlite::open(db_file_name).unwrap();
 

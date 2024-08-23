@@ -540,6 +540,7 @@ dependencies = [
  "env_logger",
  "html2text",
  "log",
+ "num_cpus",
  "once_cell",
  "rand",
  "regex",

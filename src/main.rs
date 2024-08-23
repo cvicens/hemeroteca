@@ -1,6 +1,8 @@
+use std::path::Path;
+
 use hemeroteca::prelude::*;
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use env_logger::Env;
 
@@ -28,13 +30,9 @@ struct Args {
     #[arg(short, long, default_value = "feeds.txt")]
     feeds_file: String,
 
-    /// Report name
-    #[arg(long, default_value = "hemeroteca")]
-    report_name: String,
-
     /// Threads used to parse the feeds
-    #[arg(short, long, default_value = "4")]
-    threads: u8,
+    #[arg(short, long)]
+    threads: Option<usize>,
 
     /// List of categories or keywords to opt in
     #[arg(short, long)]
@@ -43,10 +41,33 @@ struct Args {
     /// Operator to use for filtering only `and` and `or` are supported
     #[arg(long, default_value = "or")]
     operator: OptInOperator,
+
+    // Subcommands
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-#[tokio::main]
-async fn main() {
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// It generates a dossier
+    Dossier {
+        /// Report name
+        #[arg(short, long, default_value = "report")]
+        report_name: String,
+
+        /// Log to file
+        #[arg(short, long)]
+        log: bool,
+
+        /// Log to database
+        #[arg(short, long)]
+        db: bool,
+    },
+}
+
+
+// #[tokio::main]
+fn main() {
     // Initialize the logger and turn off html5ever logs
     // env_logger::init();
     env_logger::Builder::from_env(Env::default())
@@ -59,11 +80,8 @@ async fn main() {
     // Get the feed urls file name
     let feeds_file = args.feeds_file;
 
-    // Get the report name
-    let report_name = args.report_name;
-
-    // Get the number of threads
-    let max_threads = args.threads;
+    // If the number of threads is not provided, use the number of cores
+    let max_threads = args.threads.unwrap_or(num_cpus::get() as usize);
 
     // Get the categories to filter out in lowercase
     let opt_in = args
@@ -92,11 +110,42 @@ async fn main() {
     }
 
     // Unwrap urls
-    let mut feed_urls = feed_urls.unwrap();
+    let feed_urls = feed_urls.unwrap();
     log::info!("Feed urls to read: {:?}", feed_urls);
 
+    // Create a tokio runtime
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(max_threads as usize)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    // If the command is dossier
+    match args.command {
+        Some(Commands::Dossier {report_name, log, db}) => {
+            log::info!("Generating dossier with the report name: {}", report_name);
+            rt.block_on( async {
+                generate_dossier_command(&feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
+            });
+        }
+        None => {
+            log::error!("No command provided. Exiting...");
+        }
+    }
+    
+}
+
+/// Function that implements the dossier command
+/// Arguments:
+/// - feed_urls: Vec<String> - The feed urls to read
+/// - report_name: String - The name of the report
+/// - opt_in: Vec<String> - The categories to filter in
+/// - operator: Operator - The operator to use for filtering
+/// - log: bool - Whether to log to file
+/// - db: bool - Whether to log to database
+async fn generate_dossier_command(feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, log: bool, db: bool) {
     // Vector to store the items read from the feeds
-    let items = fetch_news_items_opted_in(&mut feed_urls, &opt_in, operator.as_wrapper()).await;
+    let items = fetch_news_items_opted_in(feed_urls, &opt_in, operator).await;
 
     // if we could read the items from the feeds
     if let Some(mut items) = items {
@@ -115,24 +164,39 @@ async fn main() {
             // Get the current date in the format YYYY-MM-DD-HH-MM-SS
             let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
 
-            // Create the report db file name
-            let report_db_file = format!("{}_{}.db", report_name, current_date);
+            // Create the report folder name
+            let report_folder = format!("{}_{}", report_name, current_date);
 
-            // Create the log file name
-            let report_log_file = format!("{}_{}.md", report_name, current_date);
+            // Define the folder path
+            let folder_path = Path::new(&report_folder);
 
-            // Logging to file
-            log::info!("Logging to the report log file: {}", report_log_file);
+            // Create the report folder
+            std::fs::create_dir_all(folder_path).expect("Could not create the report folder!");
 
-            // Log clean news items to output file
-            log_news_items_to_file(&clean_news_items, &report_log_file);
+            // If log is true, log to file
+            if log {
+                // Create the log file name
+                let report_log_file = folder_path.join(format!("{}_{}.md", report_name, current_date));
 
-            // Logging to file
-            log::info!("Logging to the report log database: {}", report_db_file);
+                // Logging to file
+                log::info!("Logging to the report log file: {}", report_log_file.to_str().unwrap());
 
-            // Insert the news items into the database
-            let unique_inserted_items = log_news_items_to_db(&clean_news_items, &report_db_file);
-            log::info!("Unique inserted items: {:?}", unique_inserted_items);
+                // Log clean news items to output file
+                log_news_items_to_file(&clean_news_items, report_log_file.to_str().unwrap());
+            }
+
+            // If db is true, log to database
+            if db {
+                // Create the report db file name
+                let report_db_file = folder_path.join(format!("{}_{}.db", report_name, current_date));
+                
+                // Logging to database
+                log::info!("Logging to the report log database: {}", report_db_file.to_str().unwrap());
+
+                // Insert the news items into the database
+                let unique_inserted_items = log_news_items_to_db(&clean_news_items, report_db_file.to_str().unwrap()).await;
+                log::info!("Unique inserted items: {:?}", unique_inserted_items);
+            }
 
             // Now that the contents are present and clean pdate again all the items with the calculated relevance 
             // and return the top k items
@@ -140,13 +204,17 @@ async fn main() {
 
             
             // Create the dossier file name
-            let dossier_file = format!("dossier-{}_{}.md", report_name, current_date);
+            let dossier_file = folder_path.join(format!("dossier-{}_{}.md", report_name, current_date));
+
+            // Generating dossier
+            log::info!("Generating dossier: {}", dossier_file.to_str().unwrap());
 
             // Generate the dossier with the top k items
-            generate_dossier(&top_k_items, &dossier_file);
+            generate_dossier(&top_k_items, dossier_file.to_str().unwrap());
             
         } else {
             log::error!("No news items survived the cleaning phase! Exiting...");
         }
     }
 }
+

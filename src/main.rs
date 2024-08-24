@@ -63,10 +63,16 @@ enum Commands {
         #[arg(short, long)]
         db: bool,
     },
+
+    // Relevance
+    Relevance {
+        /// Report name
+        #[arg(short, long, default_value = "report")]
+        report_name: String,
+    },
 }
 
-
-// #[tokio::main]
+/// Main function
 fn main() {
     // Initialize the logger and turn off html5ever logs
     // env_logger::init();
@@ -128,11 +134,62 @@ fn main() {
                 generate_dossier_command(&feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
             });
         }
+        Some(Commands::Relevance {report_name}) => {
+            log::info!("Generating relevance with the report name: {}", report_name);
+            rt.block_on( async {
+                generate_relevance_command(&feed_urls, &report_name).await;
+            });
+        }
         None => {
             log::error!("No command provided. Exiting...");
         }
     }
     
+}
+
+/// Function that implements the relevance command
+/// Arguments:
+/// - feed_urls: Vec<String> - The feed urls to read
+/// - report_name: String - The name of the report
+async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &String) {
+    // Vector to store the items read from the feeds
+    let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
+
+    // Get the current date in the format YYYY-MM-DD-HH-MM-SS
+    let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
+
+    // if we could read the items from the feeds
+    if let Some(mut items) = items {
+        log::info!("Items read from the feeds: {:?}", items.len());
+
+        // Update all the items with the calculated relevance
+        let updated_items = update_news_items_with_relevance(&mut items).await.expect("Should not happen");
+
+        // Create the report folder name
+        let report_folder = format!("{}_relevance", report_name);
+
+        // Define the folder path
+        let folder_path = Path::new(&report_folder);
+
+        // Create the report folder
+        std::fs::create_dir_all(folder_path).expect("Could not create the report folder!");
+
+        // Create the report file name
+        let report_file = folder_path.join(format!("relevance-{}_{}.md", report_name, current_date));
+
+        // Logging to file
+        log::info!("Logging to the report log file: {}", report_file.to_str().unwrap());
+
+        // Generate the relevance report
+        let relevance_report = generate_relevance_report(&updated_items);
+
+        // Log relevance report to output file
+        if let Err(err) = log_relevance_report_to_file(&relevance_report, report_file.to_str().unwrap()).await {
+            log::error!("Failed to log relevance report to file: {}", err);
+        }
+    } else {
+        log::error!("No news items found! Exiting...");
+    }
 }
 
 /// Function that implements the dossier command

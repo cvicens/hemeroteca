@@ -16,6 +16,8 @@ pub mod prelude {
     pub use crate::fill_news_item_content;
     pub use crate::fill_news_items_with_clean_contents;
     pub use crate::get_channel_type;
+    pub use crate::generate_relevance_report;
+    pub use crate::log_relevance_report_to_file;
     pub use crate::insert_news_items;
     pub use crate::log_news_items_to_file;
     pub use crate::log_news_items_to_db;
@@ -507,6 +509,68 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
         writeln!(file).unwrap();
         
     }
+}
+
+/// Function that generates a relevance report from a vector of NewsItems as a String
+pub fn generate_relevance_report(news_items: &Vec<NewsItem>) -> String {
+    let mut report = String::new();
+
+    // Order the news items by relevance
+    let mut news_items = news_items.clone();
+    news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+
+    // Write table of contents
+    report.push_str("# Relevance Report\n");
+    report.push_str("\n");
+
+    // Prepare a bucket for the relevance of the news items per channel
+    let mut relevance_per_channel = std::collections::HashMap::new();
+
+    // Sum the relevance of the news items per channel
+    for item in news_items.iter() {
+        let relevance = item.relevance.unwrap_or_default();
+        let channel = item.channel.clone();
+
+        let channel_relevance = relevance_per_channel.entry(channel).or_insert((0.0, 0));
+        channel_relevance.0 += relevance as f64;
+        channel_relevance.1 += 1;
+    }
+
+    // Order the channels by average relevance
+    let mut relevance_per_channel: Vec<_> = relevance_per_channel.into_iter().collect();
+    relevance_per_channel.sort_by(|a, b| {
+        let relevance_a = a.1 .0 / a.1 .1 as f64;
+        let relevance_b = b.1 .0 / b.1 .1 as f64;
+        relevance_b.partial_cmp(&relevance_a).unwrap()
+    });
+
+    // Write the relevance per channel
+    report.push_str("## Relevance per Channel\n\n");
+    for (channel, relevance) in relevance_per_channel.iter() {
+        report.push_str(&format!("- **{}:** Items: {} Total: {} Average: {}\n", channel, relevance.1, relevance.0, relevance.0/relevance.1 as f64));
+    }
+    report.push_str("\n");
+
+    // Write the news items with their relevance
+    report.push_str("## Relevance list\n");
+    for (i, item) in news_items.iter().enumerate() {
+        let relevance = item.relevance.unwrap_or_default();
+        report.push_str(&format!("{}. ({}) [{}] {}\n", i, relevance, item.channel, item.title));
+    }
+
+    report
+}
+
+/// Function that writes a relevance report to a file and returns a Result
+pub async fn log_relevance_report_to_file(report: &str, file: &str) -> Result<(), Box<dyn Error>> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)?;
+
+    writeln!(file, "{}", report)?;
+
+    Ok(())
 }
 
 /// Function that generates an anchor from a title

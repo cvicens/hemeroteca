@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashSet;
 use strsim::sorensen_dice;
 
-use crate::common::NewsItem;
+use crate::common::{NewsItem, DEFAULT_CONFIG_FOLDER_NAME, DEFAULT_ROOT_WORDS_FILE};
 
 const DICE_COEFFICIENT: f64 = 0.75;
 
@@ -81,11 +81,28 @@ impl Relevance {
     
 }
 
+/// Function to get additional words from file ~/.hemeroteca/root_words.txt and add them to the ROOT_WORDS HashSet returning a new HashSet 
+fn get_combined_root_words() -> HashSet<String> {
+    let mut additional_words = HashSet::new();
+    let home_dir = dirs::home_dir().unwrap();
+    
+    let root_words_file = home_dir.join(DEFAULT_CONFIG_FOLDER_NAME).join(DEFAULT_ROOT_WORDS_FILE);
+    if let Ok(file) = std::fs::read_to_string(root_words_file) {
+        for word in file.split_whitespace() {
+            additional_words.insert(word.to_string());
+        }
+    }
+
+    additional_words.extend(ROOT_WORDS.iter().cloned().map(String::from));
+
+    additional_words
+}
+
 // Function to check if any root word is within a certain Levenshtein distance
 fn similar_to_root_word(word: &str, coefficient: f64) -> bool {
-    let root_words = &*ROOT_WORDS;
+    let root_words = get_combined_root_words();
     for root in root_words {
-        if sorensen_dice(root, word) >= coefficient {
+        if sorensen_dice(&root, word) >= coefficient {
             log::trace!("Root word '{}' is similar to '{}'", root, word);
             return true;
         } else {

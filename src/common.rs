@@ -1,6 +1,10 @@
 /// Common types and utilities used across the library
 use std::error::Error;
 
+/// Constants
+pub const DEFAULT_CONFIG_FOLDER_NAME: &str = ".hemeroteca";
+pub const DEFAULT_ROOT_WORDS_FILE: &str = "root_words.txt";
+
 // OptInOperator enum
 #[derive(Debug, Clone)]
 pub enum Operator {

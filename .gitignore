@@ -7,3 +7,5 @@ output.txt
 *.db
 *.log
 report_*
+dossiers
+.env

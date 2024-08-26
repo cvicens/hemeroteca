@@ -28,6 +28,9 @@ lint: ## Run the linter
 doc: ## Generate the documentation
 	cargo doc --no-deps --document-private-items
 
+example: ## Run the fetch example
+	cargo run --example fetch
+
 TARGET := target/release/report
 release: ## Build the project in release mode
 	cargo build --bin report --release --features="cli"

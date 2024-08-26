@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.38"
-clap = { version = "4.5.3", features = ["derive"] }
+clap = { version = "4.5.3", features = ["derive"], optional = true }
 dirs = "5.0.1"
 env_logger = "0.11.3"
 html2text = "0.12.4"
@@ -22,3 +22,16 @@ serde_json = "1.0.124"
 sqlite = "0.36.1"
 strsim = "0.11.1"
 tokio = { version = "1.36.0", features = ["full"] }
+
+[features]
+default = []
+cli = ["clap"]
+
+[lib]
+name = "hemeroteca"
+path = "src/lib.rs"
+
+[[bin]]
+name = "report"
+path = "src/bin/report.rs"
+required-features = ["cli"]

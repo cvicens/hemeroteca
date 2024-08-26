@@ -28,8 +28,8 @@ lint: ## Run the linter
 doc: ## Generate the documentation
 	cargo doc --no-deps --document-private-items
 
-TARGET := target/release/$(shell basename $(shell pwd))
+TARGET := target/release/report
 release: ## Build the project in release mode
-	cargo build --release
+	cargo build --bin report --release --features="cli"
 	@echo "Binary is located at $(TARGET)"
 

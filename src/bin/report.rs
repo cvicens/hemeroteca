@@ -74,11 +74,17 @@ enum Commands {
 
 /// Main function
 fn main() {
-    // Initialize the logger and turn off html5ever logs
-    // env_logger::init();
-    env_logger::Builder::from_env(Env::default())
+    // Initialize the logger and set info as the default level and turn off html5ever logs
+    env_logger::Builder::from_env(Env::default()
+        .default_filter_or("info"))
         .filter_module("html5ever", log::LevelFilter::Off)
         .init();
+    
+    // env_logger::init();
+    // env_logger::Builder::from_env(Env::default())
+    //     .filter_module("html5ever", log::LevelFilter::Off)
+    //     .init();
+
 
     // Read the 'feeds_file' argument using clap
     let args: Args = Args::parse();
@@ -166,7 +172,7 @@ async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &Strin
         let updated_items = update_news_items_with_relevance(&mut items).await.expect("Should not happen");
 
         // Create the report folder name
-        let report_folder = format!("{}_relevance", report_name);
+        let report_folder = format!("{}_{}", report_name, current_date);
 
         // Define the folder path
         let folder_path = Path::new(&report_folder);

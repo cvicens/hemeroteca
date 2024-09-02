@@ -190,7 +190,7 @@ async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &Strin
         let relevance_report = generate_relevance_report(&updated_items);
 
         // Log relevance report to output file
-        if let Err(err) = log_relevance_report_to_file(&relevance_report, report_file.to_str().unwrap()).await {
+        if let Err(err) = log_report_to_file(&relevance_report, report_file.to_str().unwrap()).await {
             log::error!("Failed to log relevance report to file: {}", err);
         }
     } else {
@@ -267,13 +267,21 @@ async fn generate_dossier_command(feed_urls: &Vec<String>, report_name: &String,
 
             
             // Create the dossier file name
-            let dossier_file = folder_path.join(format!("dossier-{}_{}.md", report_name, current_date));
+            let report_file = folder_path.join(format!("dossier-{}_{}.md", report_name, current_date));
 
             // Generating dossier
-            log::info!("Generating dossier: {}", dossier_file.to_str().unwrap());
+            log::info!("Generating dossier: {}", report_file.to_str().unwrap());
 
-            // Generate the dossier with the top k items
-            generate_dossier(&top_k_items, dossier_file.to_str().unwrap());
+            // // Generate the dossier with the top k items
+            // generate_dossier(&top_k_items, report_file.to_str().unwrap());
+
+            // Generate the dossier report
+            let report = generate_dossier_report(&top_k_items);
+
+            // Log report to output file
+            if let Err(err) = log_report_to_file(&report, report_file.to_str().unwrap()).await {
+                log::error!("Failed to log relevance report to file: {}", err);
+            }
             
         } else {
             log::error!("No news items survived the cleaning phase! Exiting...");

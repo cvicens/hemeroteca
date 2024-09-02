@@ -17,11 +17,11 @@ pub mod prelude {
     pub use crate::fill_news_items_with_clean_contents;
     pub use crate::get_channel_type;
     pub use crate::generate_relevance_report;
-    pub use crate::log_relevance_report_to_file;
+    pub use crate::log_report_to_file;
     pub use crate::insert_news_items;
     pub use crate::log_news_items_to_file;
     pub use crate::log_news_items_to_db;
-    pub use crate::generate_dossier;
+    pub use crate::generate_dossier_report;
     pub use crate::openai::summarize;
     pub use crate::read_feed;
     pub use crate::read_urls;
@@ -587,62 +587,130 @@ fn generate_anchor(title: &str) -> String {
     format!("#{}", anchor)
 }
 
-/// Function that generates a dossier with a vector of news items
-pub fn generate_dossier(news_items: &Vec<NewsItem>, file: &str) {
+// /// Function that generates a dossier with a vector of news items
+// pub fn generate_dossier(news_items: &Vec<NewsItem>, file: &str) {
+//     let mut file = std::fs::OpenOptions::new()
+//         .create(true)
+//         .append(true)
+//         .open(file)
+//         .unwrap();
+
+//     // Header of the dossier
+//     writeln!(file, "# Dossier").unwrap();
+
+//     // Write table of contents
+//     writeln!(file, "## Table of Contents").unwrap();
+//     for (i,item) in news_items.iter().enumerate() {
+//         writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
+//     }
+//     writeln!(file).unwrap();
+
+//     // Write metadata of the dossier
+//     writeln!(file, "## Metadata").unwrap();
+//     writeln!(file, "- **Number of items:** {}", news_items.len()).unwrap();
+//     writeln!(file, "- **Date:** {:?}", chrono::Local::now()).unwrap();
+//     writeln!(file).unwrap();
+
+//     // Write the news items
+//     writeln!(file, "## News Items").unwrap();
+
+//     for item in news_items {
+//         writeln!(file,"---").unwrap();
+//         writeln!(file, "### {}", item.title).unwrap();
+//         writeln!(file).unwrap();
+
+//         writeln!(file, "#### Data").unwrap();
+//         writeln!(file, "- **Channel:** {}", item.channel).unwrap();
+//         writeln!(file, "- **Relevance:** {}", item.relevance.unwrap_or_default()).unwrap();
+//         writeln!(file, "- **Link:** {}", item.link).unwrap();
+//         writeln!(file, "- **Publish Date:** {:?}", item.pub_date).unwrap();
+//         writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
+//         writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
+//         writeln!(file, "- **Error:** {:?}", item.error).unwrap();
+//         writeln!(file).unwrap();
+        
+//         // writeln!(file, "#### Description\n{}", &item.description).unwrap();
+//         // writeln!(file).unwrap();
+
+//         match &item.clean_content {
+//             Some(clean_content) => {
+//                 writeln!(file, "#### Clean Content \n{}", clean_content).unwrap();
+//             }
+//             None => {
+//                 writeln!(file, "#### Clean Content \nN/A").unwrap();
+//             }
+//         }
+//         writeln!(file).unwrap();
+        
+//     }
+// }
+
+/// Function that writes a report (&str) to a file and returns a Result
+pub async fn log_report_to_file(report: &str, file: &str) -> Result<(), Box<dyn Error>> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(file)
-        .unwrap();
+        .open(file)?;
+
+    writeln!(file, "{}", report)?;
+
+    Ok(())
+}
+
+/// Function that generates a dossier report with a vector of news items
+pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
+    let mut report = String::new();
 
     // Header of the dossier
-    writeln!(file, "# Dossier").unwrap();
+    report.push_str("# Dossier\n\n");
 
     // Write table of contents
-    writeln!(file, "## Table of Contents").unwrap();
+    report.push_str("## Table of Contents\n");
     for (i,item) in news_items.iter().enumerate() {
-        writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
+        report.push_str(&format!("{}. [{}]({})\n", i + 1, item.title, generate_anchor(&item.title)));
     }
-    writeln!(file).unwrap();
+    report.push_str("\n");
 
     // Write metadata of the dossier
-    writeln!(file, "## Metadata").unwrap();
-    writeln!(file, "- **Number of items:** {}", news_items.len()).unwrap();
-    writeln!(file, "- **Date:** {:?}", chrono::Local::now()).unwrap();
-    writeln!(file).unwrap();
+    report.push_str("## Metadata\n");
+    report.push_str(&format!("- **Number of items:** {}\n", news_items.len()));
+    report.push_str(&format!("- **Date:** {:?}\n", chrono::Local::now()));
+    report.push_str("\n");
 
     // Write the news items
-    writeln!(file, "## News Items").unwrap();
+    report.push_str("## News Items\n");
 
     for item in news_items {
-        writeln!(file,"---").unwrap();
-        writeln!(file, "### {}", item.title).unwrap();
-        writeln!(file).unwrap();
+        report.push_str("---\n");
+        report.push_str(&format!("### {}\n", item.title));
+        report.push_str("\n");
 
-        writeln!(file, "#### Data").unwrap();
-        writeln!(file, "- **Channel:** {}", item.channel).unwrap();
-        writeln!(file, "- **Relevance:** {}", item.relevance.unwrap_or_default()).unwrap();
-        writeln!(file, "- **Link:** {}", item.link).unwrap();
-        writeln!(file, "- **Publish Date:** {:?}", item.pub_date).unwrap();
-        writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
-        writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
-        writeln!(file, "- **Error:** {:?}", item.error).unwrap();
-        writeln!(file).unwrap();
+        report.push_str("#### Data\n");
+        report.push_str(&format!("- **Channel:** {}\n", item.channel));
+        report.push_str(&format!("- **Relevance:** {}\n", item.relevance.unwrap_or_default()));
+        report.push_str(&format!("- **Link:** {}\n", item.link));
+        report.push_str(&format!("- **Publish Date:** {:?}\n", item.pub_date));
+        report.push_str(&format!("- **Categories:** {:?}\n", item.categories));
+        report.push_str(&format!("- **Keywords:** {:?}\n", item.keywords));
+        report.push_str(&format!("- **Error:** {:?}\n", item.error));
+        report.push_str("\n");
         
-        // writeln!(file, "#### Description\n{}", &item.description).unwrap();
-        // writeln!(file).unwrap();
+        // report.push_str("#### Description\n{}", &item.description);
+        // report.push_str(file);
 
         match &item.clean_content {
             Some(clean_content) => {
-                writeln!(file, "#### Clean Content \n{}", clean_content).unwrap();
+                report.push_str(&format!("#### Clean Content \n{}", clean_content));
             }
             None => {
-                writeln!(file, "#### Clean Content \nN/A").unwrap();
+                report.push_str(&format!("#### Clean Content \nN/A"));
             }
         }
-        writeln!(file).unwrap();
+        report.push_str("\n");
         
     }
+
+    report
 }
 
 /// Function that logs vector of NewsItems into a sqlite database

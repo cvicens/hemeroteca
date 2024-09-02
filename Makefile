@@ -13,7 +13,7 @@ fmt: ## Format the code
 	cargo fmt
 
 build: ## Build the project
-	cargo build
+	cargo build --bin report --features="cli"
 
 run: ## Run the project
 	cargo run

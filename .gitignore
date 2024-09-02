@@ -9,3 +9,4 @@ output.txt
 report_*
 dossiers
 .env
+.token

@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 /// Module for storage related functions
 use crate::common::{NewsItem, PipelineError};
 

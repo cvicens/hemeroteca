@@ -2,6 +2,8 @@
 use once_cell::sync::Lazy;
 
 use std::collections::HashSet;
+use std::fmt::Display;
+
 use strsim::sorensen_dice;
 
 use crate::common::{NewsItem, DEFAULT_CONFIG_FOLDER_NAME, DEFAULT_ROOT_WORDS_FILE};
@@ -36,6 +38,7 @@ pub struct Relevance {
 }
 
 impl Relevance {
+    // Constructor for Relevance
     pub fn new(relevance_core: (bool, u64, u64, u64, u64, u64), relevance_content: u64, elapsed_time: f64) -> Self {
         Self {
             error: relevance_core.0,
@@ -46,13 +49,7 @@ impl Relevance {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        format!(
-            "Relevance[core: {}, content: {}, explanation: '{}']",
-            self.relevance_core, self.relevance_content, self.explanation
-        )
-    }
-
+    // Function to build the explanation of the relevance
     fn build_explanation(error: bool, by_creator: u64, by_categories: u64, by_keyword: u64, by_title: u64, by_content: u64) -> String {
         if error {
             "Error in the news item".to_string();
@@ -79,6 +76,13 @@ impl Relevance {
         self.relevance_content.cmp(&other.relevance_content)
     }
     
+}
+
+
+impl Display for Relevance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Relevance[core: {}, content: {}, explanation: '{}']", self.relevance_core, self.relevance_content, self.explanation)
+    }
 }
 
 /// Function to get additional words from file ~/.hemeroteca/root_words.txt and add them to the ROOT_WORDS HashSet returning a new HashSet 
@@ -120,7 +124,7 @@ fn calculate_relevance_core(news_item: &NewsItem) -> (bool, u64, u64, u64, u64, 
     }
 
     // If the news item has a creator not empty, increase the relevance
-    let relevance_by_creator = if news_item.creators.len() > 0 {
+    let relevance_by_creator = if !news_item.creators.is_empty() {
         10
     } else {
         0
@@ -153,7 +157,7 @@ fn calculate_relevance_core(news_item: &NewsItem) -> (bool, u64, u64, u64, u64, 
     };
 
     // f any of the word in the title is similar to a root word, increase the relevance by 1 for each
-    let relevance_by_title = if news_item.title.len() > 0 {
+    let relevance_by_title = if !news_item.title.is_empty() {
         let mut relevance = 0;
         for word in news_item.title.split_whitespace() {
             if similar_to_root_word(word, DICE_COEFFICIENT) {
@@ -166,7 +170,7 @@ fn calculate_relevance_core(news_item: &NewsItem) -> (bool, u64, u64, u64, u64, 
     };
 
     // If any of the word in the description is similar to a root word, increase the relevance by 1 for each
-    let relevance_by_description = if news_item.description.len() > 0 {
+    let relevance_by_description = if !news_item.description.is_empty() {
         let mut relevance = 0;
         for word in news_item.description.split_whitespace() {
             if similar_to_root_word(word, DICE_COEFFICIENT) {
@@ -190,7 +194,7 @@ pub async fn calculate_relevance(news_item: &NewsItem) -> Relevance {
     let relevance_core = calculate_relevance_core(news_item);
 
     // If the news item has an error, return 0 relevance
-    let relevance = if relevance_core.0 {
+    if relevance_core.0 {
         Relevance::new(relevance_core, 0, 0.0)
     } else {
         // If the news item has a clean content, increase the relevance
@@ -208,9 +212,7 @@ pub async fn calculate_relevance(news_item: &NewsItem) -> Relevance {
 
         let elapsed_time = start.elapsed().as_secs_f64();
         Relevance::new(relevance_core, relevance_content, elapsed_time)
-    };
-
-    relevance
+    }
 }
 
 

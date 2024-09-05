@@ -1,5 +1,5 @@
 /// Common types and utilities used across the library
-use std::error::Error;
+use std::{error::Error, str::FromStr};
 
 /// Constants
 pub const DEFAULT_CONFIG_FOLDER_NAME: &str = ".hemeroteca";
@@ -56,9 +56,11 @@ impl Default for PipelineError {
 }
 
 // Return a str representation of the PipelineError
-impl PipelineError {
+impl FromStr for PipelineError {
+    type Err = Box<dyn Error>;
+
     /// Function that returns PipelineError from a &str
-    pub fn from_str(error: &str) -> Result<Self, Box<dyn Error>> {
+    fn from_str(error: &str) -> Result<Self, Self::Err> {
         // Match error by using a regex pattern:
         // - ParsingError(.*) => ParsingError
         // - NetworkError(.*) => NetworkError
@@ -80,7 +82,9 @@ impl PipelineError {
             _ => Err("No match".into()),
         }
     }
+}
 
+impl PipelineError {
     pub fn as_str(&self) -> &str {
         match self {
             PipelineError::EmptyString => "EmptyString",

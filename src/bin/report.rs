@@ -2,7 +2,7 @@ use std::path::Path;
 
 use hemeroteca::prelude::*;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum, CommandFactory};
 
 use env_logger::Env;
 
@@ -42,6 +42,10 @@ struct Args {
     #[arg(long, default_value = "or")]
     operator: OptInOperator,
 
+    // Root folder for the reports
+    #[arg(short, long, default_value = ".")]
+    root: String,
+
     // Subcommands
     #[command(subcommand)]
     command: Option<Commands>,
@@ -79,15 +83,18 @@ fn main() {
         .default_filter_or("info"))
         .filter_module("html5ever", log::LevelFilter::Off)
         .init();
-    
-    // env_logger::init();
-    // env_logger::Builder::from_env(Env::default())
-    //     .filter_module("html5ever", log::LevelFilter::Off)
-    //     .init();
-
 
     // Read the 'feeds_file' argument using clap
     let args: Args = Args::parse();
+
+    // If no subcommand is provided, print the help message and exit
+    if args.command.is_none() {
+        Args::command().print_help().unwrap();
+        std::process::exit(0);
+    }
+
+    // Get the root folder for the reports
+    let root_folder = args.root;
 
     // Get the feed urls file name
     let feeds_file = args.feeds_file;
@@ -132,22 +139,22 @@ fn main() {
         .build()
         .unwrap();
 
-    // If the command is dossier
+    // Match the command
     match args.command {
         Some(Commands::Dossier {report_name, log, db}) => {
             log::info!("Generating dossier with the report name: {}", report_name);
             rt.block_on( async {
-                generate_dossier_command(&feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
+                generate_dossier_command(&root_folder, &feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
             });
         }
         Some(Commands::Relevance {report_name}) => {
             log::info!("Generating relevance with the report name: {}", report_name);
             rt.block_on( async {
-                generate_relevance_command(&feed_urls, &report_name).await;
+                generate_relevance_command(&root_folder, &feed_urls, &report_name).await;
             });
         }
         None => {
-            log::error!("No command provided. Exiting...");
+            log::error!("No subcommand provided! Exiting...");
         }
     }
     
@@ -157,7 +164,7 @@ fn main() {
 /// Arguments:
 /// - feed_urls: Vec<String> - The feed urls to read
 /// - report_name: String - The name of the report
-async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &String) {
+async fn generate_relevance_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String) {
     // Vector to store the items read from the feeds
     let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
 
@@ -175,10 +182,10 @@ async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &Strin
         let report_folder = format!("{}_{}", report_name, current_date);
 
         // Define the folder path
-        let folder_path = Path::new(&report_folder);
+        let folder_path = Path::new(&root_folder).join(&report_folder);
 
         // Create the report folder
-        std::fs::create_dir_all(folder_path).expect("Could not create the report folder!");
+        std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
 
         // Create the report file name
         let report_file = folder_path.join(format!("relevance-{}_{}.md", report_name, current_date));
@@ -206,7 +213,7 @@ async fn generate_relevance_command(feed_urls: &Vec<String>, report_name: &Strin
 /// - operator: Operator - The operator to use for filtering
 /// - log: bool - Whether to log to file
 /// - db: bool - Whether to log to database
-async fn generate_dossier_command(feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, log: bool, db: bool) {
+async fn generate_dossier_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, log: bool, db: bool) {
     // Vector to store the items read from the feeds
     let items = fetch_news_items_opted_in(feed_urls, &opt_in, operator).await;
 
@@ -231,10 +238,10 @@ async fn generate_dossier_command(feed_urls: &Vec<String>, report_name: &String,
             let report_folder = format!("{}_{}", report_name, current_date);
 
             // Define the folder path
-            let folder_path = Path::new(&report_folder);
+            let folder_path = Path::new(&root_folder).join(&report_folder);
 
             // Create the report folder
-            std::fs::create_dir_all(folder_path).expect("Could not create the report folder!");
+            std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
 
             // If log is true, log to file
             if log {

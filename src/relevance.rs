@@ -64,9 +64,21 @@ impl Relevance {
     pub fn net_relevance(&self) -> u64 {
         self.relevance_core + self.relevance_content
     }
+    
+}
 
+impl Eq for Relevance {}
+
+impl PartialOrd for Relevance {
+    // partial_cmp implementation for Relevance comparing by error, relevance_core adn relevance_content
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Relevance {
     // cmp implementation for Relevance comparing by error, relevance_core adn relevance_content
-    pub fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         if self.error != other.error {
             return self.error.cmp(&other.error);
         }
@@ -75,7 +87,6 @@ impl Relevance {
         }
         self.relevance_content.cmp(&other.relevance_content)
     }
-    
 }
 
 

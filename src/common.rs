@@ -39,20 +39,14 @@ pub struct NewsItem {
 }
 
 // Define a custom error type for the pipeline
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum PipelineError {
     EmptyString,
     ParsingError(String),
+    #[default]
     NoContent,
     NetworkError(String),
     UnknownError,
-}
-
-// Default implementation for the PipelineError enum
-impl Default for PipelineError {
-    fn default() -> Self {
-        PipelineError::NoContent
-    }
 }
 
 // Return a str representation of the PipelineError

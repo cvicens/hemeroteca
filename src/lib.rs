@@ -108,16 +108,10 @@ pub async fn fetch_news_items_opted_in(
         let url = url.clone();
         let handle = tokio::spawn(async move {
             let channel = read_feed(&url).await;
-            if channel.is_err() {
-                log::error!(
-                    "Could not read the feed from {}. ERROR: {}",
-                    url,
-                    channel.err().unwrap()
-                );
-                None
-            } else {
-                Some(channel.unwrap())
-            }
+            // Map the result to an option and log the error if any
+            channel.map_err(|e| {
+                log::error!("Could not read the feed from {}. ERROR: {}", url, e);
+            }).ok()
         });
         handles.push(handle);
     }

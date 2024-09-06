@@ -94,8 +94,8 @@ pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
 /// Function that returns NewsItems from a vector of feed urls matching the
 /// categories or keywords passed as a reference
 pub async fn fetch_news_items_opted_in(
-    feed_urls: &Vec<String>,
-    opt_in: &Vec<String>,
+    feed_urls: &[String],
+    opt_in: &[String],
     operator: Operator,
 ) -> Option<Vec<NewsItem>> {
     let mut channels = Vec::new();
@@ -131,13 +131,8 @@ pub async fn fetch_news_items_opted_in(
     let items: Vec<(&str, Vec<Item>)> = channels
         .iter()
         .filter_map(|channel| {
-            if let Some(channel) = channel {
-                // (Some(channel.title), Some(channel.items().to_vec()))
-                Some((channel.title(), channel.items().to_vec()))
-            } else {
-                // (None, None)
-                None
-            }
+            // Maps option channel to an option tuple of the title and the items
+            channel.as_ref().map(|channel| (channel.title(), channel.items().to_vec()))
         })
         .collect();
 
@@ -148,13 +143,13 @@ pub async fn fetch_news_items_opted_in(
         // Else, get all the items from the channels
         let mut all_items: Vec<NewsItem> = items
             .iter()
-            .map(|(channel, items)| {
+            .flat_map(|(channel, items)| {
                 items
                     .iter()
                     .map(|item| NewsItem::from_item(channel, item))
                     .filter_map(|result| {
-                        if result.is_ok() {
-                            Some(result.unwrap())
+                        if let Ok(result) = result {
+                            Some(result)
                         } else {
                             log::error!("Could not get the item from the result: {:?}", result);
                             None
@@ -162,7 +157,6 @@ pub async fn fetch_news_items_opted_in(
                     })
                     .collect::<Vec<NewsItem>>()
             })
-            .flatten()
             .collect();
 
         // Retains the items that have any of the categories or keywords equal to the
@@ -234,7 +228,7 @@ pub async fn fetch_news_items_opted_in(
 /// let channel_type = get_channel_type(&channel);
 /// assert_eq!(channel_type, ChannelType::Other);
 /// ```
-pub fn get_channel_type(channel: &String) -> ChannelType {
+pub fn get_channel_type(channel: &str) -> ChannelType {
     // If channel in uppercase starts with "EL PAÍS" return ElPais
     if channel.to_uppercase().contains("EL PAÍS") {
         ChannelType::ElPais
@@ -434,7 +428,7 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
 // }
 
 /// Function that returns the top k news items
-pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<NewsItem> {
+pub async fn top_k_news_items(top_k: u8, news_items:&[NewsItem]) -> Vec<NewsItem> {
     // The top k news items are the ones with the highest relevance
     let mut handles = Vec::new();
 
@@ -468,7 +462,7 @@ pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) -> Vec<News
 }
 
 /// Function that logs a vector of NewsItems to a file appending the contents
-pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
+pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -476,7 +470,7 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
         .unwrap();
 
     // Order the news items by relevance
-    let mut news_items = news_items.clone();
+    let mut news_items = news_items.to_owned();
     news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
 
     // Write table of contents
@@ -512,16 +506,16 @@ pub fn log_news_items_to_file(news_items: &Vec<NewsItem>, file: &str) {
 }
 
 /// Function that generates a relevance report from a vector of NewsItems as a String
-pub fn generate_relevance_report(news_items: &Vec<NewsItem>) -> String {
+pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
     let mut report = String::new();
 
     // Order the news items by relevance
-    let mut news_items = news_items.clone();
+    let mut news_items = news_items.to_owned();
     news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
 
     // Write table of contents
     report.push_str("# Relevance Report\n");
-    report.push_str("\n");
+    report.push('\n');
 
     // Prepare a bucket for the relevance of the news items per channel
     let mut relevance_per_channel = std::collections::HashMap::new();
@@ -549,7 +543,7 @@ pub fn generate_relevance_report(news_items: &Vec<NewsItem>) -> String {
     for (channel, relevance) in relevance_per_channel.iter() {
         report.push_str(&format!("- **{}:** Items: {} Total: {} Average: {}\n", channel, relevance.1, relevance.0, relevance.0/relevance.1 as f64));
     }
-    report.push_str("\n");
+    report.push('\n');
 
     // Write the news items with their relevance
     report.push_str("## Relevance list\n");
@@ -669,13 +663,13 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
     for (i,item) in news_items.iter().enumerate() {
         report.push_str(&format!("{}. [{}]({})\n", i + 1, item.title, generate_anchor(&item.title)));
     }
-    report.push_str("\n");
+    report.push('\n');
 
     // Write metadata of the dossier
     report.push_str("## Metadata\n");
     report.push_str(&format!("- **Number of items:** {}\n", news_items.len()));
     report.push_str(&format!("- **Date:** {:?}\n", chrono::Local::now()));
-    report.push_str("\n");
+    report.push('\n');
 
     // Write the news items
     report.push_str("## News Items\n");
@@ -683,7 +677,7 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
     for item in news_items {
         report.push_str("---\n");
         report.push_str(&format!("### {}\n", item.title));
-        report.push_str("\n");
+        report.push('\n');
 
         report.push_str("#### Data\n");
         report.push_str(&format!("- **Channel:** {}\n", item.channel));
@@ -693,7 +687,7 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
         report.push_str(&format!("- **Categories:** {:?}\n", item.categories));
         report.push_str(&format!("- **Keywords:** {:?}\n", item.keywords));
         report.push_str(&format!("- **Error:** {:?}\n", item.error));
-        report.push_str("\n");
+        report.push('\n');
         
         // report.push_str("#### Description\n{}", &item.description);
         // report.push_str(file);
@@ -703,10 +697,10 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
                 report.push_str(&format!("#### Clean Content \n{}", clean_content));
             }
             None => {
-                report.push_str(&format!("#### Clean Content \nN/A"));
+                report.push_str("#### Clean Content \nN/A");
             }
         }
-        report.push_str("\n");
+        report.push('\n');
         
     }
 
@@ -722,9 +716,7 @@ pub async fn log_news_items_to_db(news_items: &Vec<NewsItem>, db_file_name: &str
     NewsItem::create_table(&connection).unwrap();
 
     // Insert the news items into the database
-    let unique_inserted_items = insert_news_items(&news_items, &connection);
-
-    unique_inserted_items
+    insert_news_items(news_items, &connection)
 }
 
 /// Function that inserts a vector of NewsItems into a database

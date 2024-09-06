@@ -118,6 +118,9 @@ fn main() {
     // Get the operator to use for filtering
     let operator = args.operator;
 
+    // Start the timer
+    let start = std::time::Instant::now();
+
     // Read the feed urls from the file
     let feed_urls = read_urls(&feeds_file);
     log::info!("Reading feed urls from the file: {}", feeds_file);
@@ -138,7 +141,7 @@ fn main() {
         .enable_all()
         .build()
         .unwrap();
-
+    
     // Match the command
     match args.command {
         Some(Commands::Dossier {report_name, log, db}) => {
@@ -146,12 +149,16 @@ fn main() {
             rt.block_on( async {
                 generate_dossier_command(&root_folder, &feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
             });
+            let end: std::time::Duration = start.elapsed();
+            log::info!("Time elapsed: {:?}", end);
         }
         Some(Commands::Relevance {report_name}) => {
             log::info!("Generating relevance with the report name: {}", report_name);
             rt.block_on( async {
                 generate_relevance_command(&root_folder, &feed_urls, &report_name).await;
             });
+            let end: std::time::Duration = start.elapsed();
+            log::info!("Time elapsed: {:?}", end);
         }
         None => {
             log::error!("No subcommand provided! Exiting...");

@@ -29,6 +29,7 @@ pub mod prelude {
     pub use crate::top_k_news_items;
     pub use crate::update_news_items_with_relevance;
     pub use crate::update_news_items_with_relevance_top_k;
+    pub use crate::write_news_items_to_csv;
 }
 
 use crate::relevance::calculate_relevance;
@@ -46,6 +47,9 @@ use html2text::config;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rss::{Channel, Item};
+
+use std::fs::File;
+use csv::Writer;
 
 /// Function that reads a feed from a URL
 pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
@@ -561,6 +565,51 @@ pub async fn log_relevance_report_to_file(report: &str, file: &str) -> Result<()
     Ok(())
 }
 
+/// Function that returns the current time in RFC 1123 format
+fn rfc_1123(now: chrono::DateTime<chrono::Utc>) -> String {
+    // Format the current time to RFC 1123 format, but replace +0000 with GMT
+    now.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
+/// Function that writes a slice of items to a CSV file
+pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> Result<(), Box<dyn Error>> {
+    // Create a CSV writer that writes to the given file
+    let file = File::create(file)?;
+    let mut writer = Writer::from_writer(file);
+
+    // Write the header row
+    writer.write_record(&[
+        "Channel", "Title", "Link", "Description", "Creators", 
+        "Publication Date", "Categories", "Keywords", "Clean Content", 
+        "Error", "Feedback Date", "Relevance"
+    ])?;
+
+    // Feedback date with format: Sun, 01 Jan 2017 12:00:00 +0000
+    let feedback_date = chrono::Utc::now().to_rfc2822();
+
+    // Iterate over each NewsItem and write its fields to the CSV
+    for item in news_items {
+        writer.write_record(&[
+            &item.channel,
+            &item.title,
+            &item.link,
+            &item.description,
+            &item.creators,
+            item.pub_date.as_deref().unwrap_or(""),
+            item.categories.as_deref().unwrap_or(""),
+            item.keywords.as_deref().unwrap_or(""),
+            item.clean_content.as_deref().unwrap_or(""),
+            &format!("{:?}", item.error),
+            &feedback_date,
+            &item.relevance.map_or(String::new(), |r| r.to_string()),
+        ])?;
+    }
+
+    // Flush and finish writing
+    writer.flush()?;
+    Ok(())
+}
+
 /// Function that generates an anchor from a title
 fn generate_anchor(title: &str) -> String {
     // Convert to lowercase
@@ -574,64 +623,6 @@ fn generate_anchor(title: &str) -> String {
     anchor = anchor.trim_matches('-').to_string();
     format!("#{}", anchor)
 }
-
-// /// Function that generates a dossier with a vector of news items
-// pub fn generate_dossier(news_items: &Vec<NewsItem>, file: &str) {
-//     let mut file = std::fs::OpenOptions::new()
-//         .create(true)
-//         .append(true)
-//         .open(file)
-//         .unwrap();
-
-//     // Header of the dossier
-//     writeln!(file, "# Dossier").unwrap();
-
-//     // Write table of contents
-//     writeln!(file, "## Table of Contents").unwrap();
-//     for (i,item) in news_items.iter().enumerate() {
-//         writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
-//     }
-//     writeln!(file).unwrap();
-
-//     // Write metadata of the dossier
-//     writeln!(file, "## Metadata").unwrap();
-//     writeln!(file, "- **Number of items:** {}", news_items.len()).unwrap();
-//     writeln!(file, "- **Date:** {:?}", chrono::Local::now()).unwrap();
-//     writeln!(file).unwrap();
-
-//     // Write the news items
-//     writeln!(file, "## News Items").unwrap();
-
-//     for item in news_items {
-//         writeln!(file,"---").unwrap();
-//         writeln!(file, "### {}", item.title).unwrap();
-//         writeln!(file).unwrap();
-
-//         writeln!(file, "#### Data").unwrap();
-//         writeln!(file, "- **Channel:** {}", item.channel).unwrap();
-//         writeln!(file, "- **Relevance:** {}", item.relevance.unwrap_or_default()).unwrap();
-//         writeln!(file, "- **Link:** {}", item.link).unwrap();
-//         writeln!(file, "- **Publish Date:** {:?}", item.pub_date).unwrap();
-//         writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
-//         writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
-//         writeln!(file, "- **Error:** {:?}", item.error).unwrap();
-//         writeln!(file).unwrap();
-        
-//         // writeln!(file, "#### Description\n{}", &item.description).unwrap();
-//         // writeln!(file).unwrap();
-
-//         match &item.clean_content {
-//             Some(clean_content) => {
-//                 writeln!(file, "#### Clean Content \n{}", clean_content).unwrap();
-//             }
-//             None => {
-//                 writeln!(file, "#### Clean Content \nN/A").unwrap();
-//             }
-//         }
-//         writeln!(file).unwrap();
-        
-//     }
-// }
 
 /// Function that writes a report (&str) to a file and returns a Result
 pub async fn log_report_to_file(report: &str, file: &str) -> Result<(), Box<dyn Error>> {

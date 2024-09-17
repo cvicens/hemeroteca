@@ -74,6 +74,17 @@ enum Commands {
         #[arg(short, long, default_value = "report")]
         report_name: String,
     },
+
+     // Feedback
+     Feedback {
+        /// Number of items to request feedback for
+        #[arg(short, long, default_value = "20")]
+        number: String,
+
+        /// File name to save the feedback as CSV
+        #[arg(short, long, default_value = "feedback.csv")]
+        file_name: String,
+    },
 }
 
 /// Main function
@@ -160,6 +171,20 @@ fn main() {
             let end: std::time::Duration = start.elapsed();
             log::info!("Time elapsed: {:?}", end);
         }
+        Some(Commands::Feedback {number, file_name}) => {
+            let number = usize::from_str_radix(&number, 10);
+            // If the number could be parsed
+            if let Ok(number) = number {
+                log::info!("Requesting feedback for {} items", number);
+                rt.block_on( async {
+                    request_feedback_command(&root_folder, &feed_urls, number, &file_name).await;
+                });
+                let end: std::time::Duration = start.elapsed();
+                log::info!("Time elapsed: {:?}", end);
+            } else {
+                log::error!("Could not parse the number of items to request feedback for! Exiting...");
+            }
+        }
         None => {
             log::error!("No subcommand provided! Exiting...");
         }
@@ -167,8 +192,129 @@ fn main() {
     
 }
 
+/// Function that implements the feedback command
+/// Arguments:
+/// - root_folder: &str - The root folder for the reports
+/// - feed_urls: Vec<String> - The feed urls to read
+/// - number: String - The number of items to request feedback for
+/// - file_name: String - The name of the file to save the feedback as CSV
+async fn request_feedback_command(root_folder: &str, feed_urls: &[String], number: usize, file_name: &str) {
+    // Vector to store the items read from the feeds
+    let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
+
+    // If there are items
+    if let Some(items) = items {
+        log::info!("Items read from the feeds: {:?}", items.len());
+
+        // Get the current date in the format YYYY-MM-DD-HH-MM-SS
+        let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
+
+        // Create the report folder name
+        let report_folder = format!("feedback_{}", current_date);
+
+        // Define the folder path
+        let folder_path = Path::new(&root_folder).join(&report_folder);
+
+        // Create the report folder
+        std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
+
+        // Create the feedback file name
+        let feedback_file = folder_path.join(&file_name);
+
+        // Take the first n items and for each item, request relevance feedback and return a new Vec<NewsItem> with the new relevance
+        let feedback_items = items.iter().take(number).filter_map(|item| {
+            if let Some(relevance) = request_relevance_feedback(item) {
+                Some(NewsItem {
+                    relevance: Some(relevance),
+                    ..item.clone()
+                })
+            } else {
+                None
+            }
+        }).collect::<Vec<NewsItem>>();
+        
+        // Write the feedback items to a CSV file
+        log::info!("Writing records to file: {}", feedback_file.to_str().unwrap());
+        if let Err(err) = write_news_items_to_csv(&feedback_items, feedback_file.to_str().unwrap()) {
+            log::error!("Failed to write feedback to CSV file: {}", err);
+        }
+    } else {
+        log::error!("No news items found! Exiting...");
+    }
+
+}
+
+/// Function that requests relevance feedback for a news item.
+/// Relevance feedback is an integer from 1 to 5, zero to skip.
+fn request_relevance_feedback(item: &NewsItem) -> Option<u64> {
+    // Print the item to the console
+    println!("\n====================================");
+
+    // Print the channel
+    println!("Channel: {}", item.channel);
+
+    // Print the title
+    println!("Title: {}", item.title);
+
+    // Calculate the number of days since publication
+    let days_since_publication = match &item.pub_date {
+        Some(date) => {
+            let date = chrono::DateTime::parse_from_rfc2822(&date).expect("Could not parse the date");
+            let now = chrono::Local::now();
+            let duration = now.signed_duration_since(date);
+            duration.num_days()
+        }
+        None => 0,
+    };
+
+    // Print the days since publication
+    println!("Days since publication: {}", days_since_publication);
+
+    // Print the creators
+    println!("Creators: {}", item.creators);
+
+    // Print the categories
+    println!("Categories: {:?}", item.categories);
+
+    // Print the keywords
+    println!("Keywords: {:?}", item.keywords);
+
+    // Print a new line
+    println!();
+
+    // Request the relevance feedback as an integer from 1 to 5
+    let relevance = loop {
+        println!("Please provide a relevance feedback for the item from 1 to 5 (/q to skip): ");
+        let mut relevance = String::new();
+        std::io::stdin().read_line(&mut relevance).expect("Failed to read line");
+
+        // If /q is entered, return None
+        if relevance.trim() == "/q" {
+            break None;
+        }
+
+        let relevance = relevance.trim().parse::<u64>();
+        match relevance {
+            Ok(relevance) => {
+                if relevance >= 1 && relevance <= 5 {
+                    break Some(relevance);
+                } else {
+                    println!("Relevance feedback must be between 1 and 5!");
+                }
+            }
+            Err(_) => {
+                println!("Relevance feedback must be an integer between 1 and 5!");
+            }
+        }
+    };
+
+    // Return the relevance
+    relevance
+}
+
 /// Function that implements the relevance command
 /// Arguments:
+/// - root_folder: &String - The root folder for the reports
 /// - feed_urls: Vec<String> - The feed urls to read
 /// - report_name: String - The name of the report
 async fn generate_relevance_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String) {

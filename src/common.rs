@@ -117,7 +117,7 @@ impl NewsItem {
         let title = item.title().ok_or("No title")?.to_string();
         let link = item.link().ok_or("No link")?.to_string();
         let description = item.description().ok_or("No description")?.to_string();
-        let pub_date = item.pub_date().map(|date| date.to_string());
+        let pub_date = item.pub_date().map(|date| date.to_string().replace("GMT", "+0000"));
         let categories = item
             .categories()
             .iter()

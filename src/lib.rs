@@ -565,12 +565,6 @@ pub async fn log_relevance_report_to_file(report: &str, file: &str) -> Result<()
     Ok(())
 }
 
-/// Function that returns the current time in RFC 1123 format
-fn rfc_1123(now: chrono::DateTime<chrono::Utc>) -> String {
-    // Format the current time to RFC 1123 format, but replace +0000 with GMT
-    now.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
-}
-
 /// Function that writes a slice of items to a CSV file
 pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> Result<(), Box<dyn Error>> {
     // Create a CSV writer that writes to the given file

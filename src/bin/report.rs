@@ -84,6 +84,10 @@ enum Commands {
         /// File name to save the feedback as CSV
         #[arg(short, long, default_value = "feedback.csv")]
         file_name: String,
+
+        /// Run on CPU rather than on GPU.
+        #[arg(long, default_value = "false")]
+        gpu: bool,
     },
 }
 
@@ -171,13 +175,13 @@ fn main() {
             let end: std::time::Duration = start.elapsed();
             log::info!("Time elapsed: {:?}", end);
         }
-        Some(Commands::Feedback {number, file_name}) => {
+        Some(Commands::Feedback {number, file_name, gpu}) => {
             let number = usize::from_str_radix(&number, 10);
             // If the number could be parsed
             if let Ok(number) = number {
                 log::info!("Requesting feedback for {} items", number);
                 rt.block_on( async {
-                    request_feedback_command(&root_folder, &feed_urls, number, &file_name).await;
+                    request_feedback_command(&root_folder, &feed_urls, number, &file_name, gpu).await;
                 });
                 let end: std::time::Duration = start.elapsed();
                 log::info!("Time elapsed: {:?}", end);
@@ -198,7 +202,7 @@ fn main() {
 /// - feed_urls: Vec<String> - The feed urls to read
 /// - number: String - The number of items to request feedback for
 /// - file_name: String - The name of the file to save the feedback as CSV
-async fn request_feedback_command(root_folder: &str, feed_urls: &[String], number: usize, file_name: &str) {
+async fn request_feedback_command(root_folder: &str, feed_urls: &[String], number: usize, file_name: &str, gpu: bool) {
     // Vector to store the items read from the feeds
     let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
 
@@ -222,8 +226,10 @@ async fn request_feedback_command(root_folder: &str, feed_urls: &[String], numbe
         let feedback_file = folder_path.join(&file_name);
 
         // Take the first n items and for each item, request relevance feedback and return a new Vec<NewsItem> with the new relevance
+        let mut counter = 0;
         let feedback_items = items.iter().take(number).filter_map(|item| {
-            if let Some(relevance) = request_relevance_feedback(item) {
+            counter += 1;
+            if let Some(relevance) = request_relevance_feedback(item, counter, number) {
                 Some(NewsItem {
                     relevance: Some(relevance),
                     ..item.clone()
@@ -246,9 +252,12 @@ async fn request_feedback_command(root_folder: &str, feed_urls: &[String], numbe
 
 /// Function that requests relevance feedback for a news item.
 /// Relevance feedback is an integer from 1 to 5, zero to skip.
-fn request_relevance_feedback(item: &NewsItem) -> Option<u64> {
+fn request_relevance_feedback(item: &NewsItem, count: usize, number: usize) -> Option<u64> {
     // Print the item to the console
     println!("\n====================================");
+
+    // Print the count
+    println!("Count: {}/{}", count, number);
 
     // Print the channel
     println!("Channel: {}", item.channel);

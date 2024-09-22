@@ -4,6 +4,7 @@ pub mod common;
 pub mod openai;
 pub mod relevance;
 pub mod storage;
+pub mod embeddings;
 
 // Re-export commonly used items in a prelude module
 pub mod prelude {

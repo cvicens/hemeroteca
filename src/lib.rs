@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::openai::summarize;
     pub use crate::relevance::calculate_relevance;
     pub use crate::embeddings::{build_model_and_tokenizer, generate_embedding, generate_embeddings, DEFAULT_MODEL_ID, DEFAULT_REVISION};
-    pub use crate::storage::{write_feedback_records_parquet, write_news_items_to_csv};
+    pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv};
     
 }
 

@@ -270,14 +270,14 @@ async fn request_feedback_command(
             if let Ok(feedback_records) = feedback_records {
                 // Write the feedback records to a Parquet file
                 log::info!("Writing records to file: {}", feedback_file.to_str().unwrap());
-                if let Err(err) = write_feedback_records_parquet(feedback_records, feedback_file.to_str().unwrap()) {
+                if let Err(err) = write_feedback_records_parquet(&feedback_records, feedback_file.to_str().unwrap()) {
                     log::error!("Failed to write feedback to Parquet file: {}", err);
                 }
 
-                // Write the feedback items to a CSV file
+                // Write the feedback records to a CSV file
                 let csv_file = feedback_file.with_extension("csv");
                 log::info!("Writing records to file: {}", csv_file.to_str().unwrap());
-                if let Err(err) = write_news_items_to_csv(&feedback_news_items, csv_file.to_str().unwrap()) {
+                if let Err(err) = write_feedback_records_to_csv(&feedback_records, csv_file.to_str().unwrap()) {
                     log::error!("Failed to write feedback to CSV file: {}", err);
                 }
             } else {

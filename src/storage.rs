@@ -168,7 +168,7 @@ impl NewsItem {
 }
 
 /// Function that writes a slice of items to a CSV file
-pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> anyhow::Result<()> {
+pub fn write_feedback_records_to_csv(records: &Vec<FeedbackRecord>, file: &str) -> anyhow::Result<()> {
     // Create a CSV writer that writes to the given file
     let file = File::create(file)?;
     let mut writer = Writer::from_writer(file);
@@ -177,27 +177,29 @@ pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> anyhow::R
     writer.write_record(&[
         "Channel", "Title", "Link", "Description", "Creators", 
         "Publication Date", "Categories", "Keywords", "Clean Content", 
-        "Error", "Feedback Date", "Relevance", "V1", "V2",
+        "Error", "Feedback Date", "Relevance", "Title Embedding", "Keywords and Categories Embedding",
     ])?;
 
     // Feedback date with format: Sun, 01 Jan 2017 12:00:00 +0000
     let feedback_date = chrono::Utc::now().to_rfc2822();
 
     // Iterate over each NewsItem and write its fields to the CSV
-    for item in news_items {
+    for record in records {
         writer.write_record(&[
-            &item.channel,
-            &item.title,
-            &item.link,
-            &item.description,
-            &item.creators,
-            item.pub_date.as_deref().unwrap_or(""),
-            item.categories.as_deref().unwrap_or(""),
-            item.keywords.as_deref().unwrap_or(""),
-            item.clean_content.as_deref().unwrap_or(""),
-            &format!("{:?}", item.error),
+            &record.news_item.channel,
+            &record.news_item.title,
+            &record.news_item.link,
+            "", // &record.news_item.description, <- skipped for now
+            &record.news_item.creators,
+            record.news_item.pub_date.as_deref().unwrap_or(""),
+            record.news_item.categories.as_deref().unwrap_or(""),
+            record.news_item.keywords.as_deref().unwrap_or(""),
+            "", //record.news_item.clean_content.as_deref().unwrap_or(""), <- skipped for now
+            &format!("{:?}", record.news_item.error),
             &feedback_date,
-            &item.relevance.map_or(String::new(), |r| r.to_string()),
+            &record.news_item.relevance.map_or(String::new(), |r| r.to_string()),
+            &record.title_embedding.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(","),
+            &record.keywords_and_categories_embedding.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(","),
         ])?;
     }
 
@@ -208,7 +210,7 @@ pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> anyhow::R
 
 // Function to convert FeedbackRecords to Arrow arrays and write them as Parquet
 // TODO: manage f64 and f32
-pub fn write_feedback_records_parquet(records: Vec<FeedbackRecord>, file: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Extract relevant fields from FeedbackRecords
     let mut channels = vec![];
     let mut titles = vec![];
@@ -244,7 +246,7 @@ pub fn write_feedback_records_parquet(records: Vec<FeedbackRecord>, file: &str) 
         keywords_and_categories_embeddings_flattened.extend(record.keywords_and_categories_embedding.clone());
         
         // Print length of all columns
-        println!("Channels: {}, Titles: {}, Creators: {}, Pub Dates: {}, Categories: {}, Keywords: {}, Relevances: {}, Title Embeddings: {}, Keywords and Categories Embeddings: {}", 
+        log::debug!("Channels: {}, Titles: {}, Creators: {}, Pub Dates: {}, Categories: {}, Keywords: {}, Relevances: {}, Title Embeddings: {}, Keywords and Categories Embeddings: {}", 
             channels.len(), titles.len(), creators.len(), pub_dates.len(), categories.len(), keywords.len(), relevances.len(), title_embeddings_flattened.len(), keywords_and_categories_embeddings_flattened.len());
     }
 

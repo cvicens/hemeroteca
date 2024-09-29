@@ -2,15 +2,20 @@
 use crate::common::{FeedbackRecord, NewsItem, PipelineError};
 
 use arrow::buffer::Buffer;
+use arrow::compute::concat;
 use csv::Writer;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::basic::Compression;
+
 use sqlite::{Connection, State};
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{ArrayData, ArrayRef, FixedSizeListArray, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -167,23 +172,35 @@ impl NewsItem {
     }
 }
 
-/// Function that writes a slice of items to a CSV file
+/// Function that writes a slice of items to a CSV file. If the file already exists, it will add
+/// the items to the end of the file with no header.
 pub fn write_feedback_records_to_csv(records: &Vec<FeedbackRecord>, file: &str) -> anyhow::Result<()> {
-    // Create a CSV writer that writes to the given file
-    let file = File::create(file)?;
-    let mut writer = Writer::from_writer(file);
+    // If the file already exists, open it in append mode
+    let mut writer = if std::path::Path::new(file).exists() {
+        // Open the file in append mode
+        let file = OpenOptions::new().append(true).open(file)?;
+        let mut writer = Writer::from_writer(file);
 
-    // Write the header row
-    writer.write_record(&[
-        "Channel", "Title", "Link", "Description", "Creators", 
-        "Publication Date", "Categories", "Keywords", "Clean Content", 
-        "Error", "Feedback Date", "Relevance", "Title Embedding", "Keywords and Categories Embedding",
-    ])?;
+        writer.flush()?;
+        writer
+    } else {
+        // Create a CSV writer that writes to the given file
+        let file = File::create(file)?;
+        let mut writer = Writer::from_writer(file);
+
+        // Write the header row
+        writer.write_record(&[
+            "Channel", "Title", "Link", "Description", "Creators", 
+            "Publication Date", "Categories", "Keywords", "Clean Content", 
+            "Error", "Feedback Date", "Relevance", "Title Embedding", "Keywords and Categories Embedding",
+        ])?;
+        writer
+    };
 
     // Feedback date with format: Sun, 01 Jan 2017 12:00:00 +0000
     let feedback_date = chrono::Utc::now().to_rfc2822();
 
-    // Iterate over each NewsItem and write its fields to the CSV
+    // Iterate over each FeedbackRecord and write its fields to the CSV
     for record in records {
         writer.write_record(&[
             &record.news_item.channel,
@@ -206,6 +223,29 @@ pub fn write_feedback_records_to_csv(records: &Vec<FeedbackRecord>, file: &str) 
     // Flush and finish writing
     writer.flush()?;
     Ok(())
+}
+
+/// Function to concatenate multiple RecordBatches into a single RecordBatch
+pub fn concat_batches(schema: &SchemaRef, batches: &[RecordBatch]) -> arrow::error::Result<RecordBatch> {
+    if batches.is_empty() {
+        return Err(arrow::error::ArrowError::InvalidArgumentError(
+            "No record batches to concatenate".to_string(),
+        ));
+    }
+
+    // Concatenate the arrays column by column
+    let columns: Vec<ArrayRef> = (0..batches[0].num_columns())
+        .map(|i| {
+            let arrays: Vec<&dyn arrow::array::Array> = batches
+                .iter()
+                .map(|batch| batch.column(i).as_ref())
+                .collect();
+            concat(&arrays)
+        })
+        .collect::<arrow::error::Result<Vec<_>>>()?;
+
+    // Create a new RecordBatch with the concatenated columns
+    RecordBatch::try_new(schema.clone(), columns)
 }
 
 // Function to convert FeedbackRecords to Arrow arrays and write them as Parquet
@@ -280,7 +320,7 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     ]));
 
     // Create a RecordBatch from the arrays
-    let batch = RecordBatch::try_new(
+    let new_batch = RecordBatch::try_new(
         schema.clone(),
         vec![
             Arc::new(channel_array) as ArrayRef,
@@ -295,19 +335,60 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
         ],
     )?;
 
-    // Create a file to write the Parquet data
-    let file = File::create(file)?;
+    let path = Path::new(file);
+    let combined_batch: RecordBatch;
 
-    // Set writer properties (optional)
+    if path.exists() {
+        // File exists, open and read the existing Parquet file
+        let file = File::open(file)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        log::debug!("Converted arrow schema is: {}", builder.schema());
+
+        let reader = builder.build()?;
+
+        // Iterate the reader to get the existing batches, print the number of rows or errors and return a Vec<RecordBatch>
+        let mut existing_batches = reader.into_iter().filter_map(|result| match result {
+            Ok(batch) => {
+                println!("Read {} records.", batch.num_rows());
+                Some(batch)
+            }
+            Err(e) => {
+                println!("Error reading batch: {}", e);
+                None
+            }
+        })
+        .filter_map(Option::Some)
+        .collect::<Vec<RecordBatch>>();
+        
+
+        // Add the existing batches to the new batch
+        existing_batches.push(new_batch);
+
+        // Concatenate existing batches with the new batch
+        combined_batch = concat_batches(&schema, &existing_batches)?;
+
+    } else {
+        // File does not exist, use the new batch as is
+        combined_batch = new_batch;
+    }
+
+    // Open the file in append mode, create if not exists
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true) // Overwrite content
+        .open(file)?;
+
+    // Set writer properties
     let writer_props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
+        .set_compression(Compression::SNAPPY)
         .build();
 
     // Create the ArrowWriter
     let mut writer = ArrowWriter::try_new(file, schema, Some(writer_props))?;
 
-    // Write the RecordBatch
-    writer.write(&batch)?;
+    // Write the combined RecordBatch
+    writer.write(&combined_batch)?;
 
     // Close the writer to finalize the file
     writer.close()?;

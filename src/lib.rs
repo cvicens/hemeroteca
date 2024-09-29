@@ -8,11 +8,12 @@ pub mod embeddings;
 
 // Re-export commonly used items in a prelude module
 pub mod prelude {
-    pub use crate::clean_content;
     pub use crate::common::ChannelType;
     pub use crate::common::NewsItem;
     pub use crate::common::Operator;
     pub use crate::common::PipelineError;
+    pub use crate::common::FeedbackRecord;
+    pub use crate::clean_content;
     pub use crate::fetch_news_items_opted_in;
     pub use crate::fill_news_item_content;
     pub use crate::fill_news_items_with_clean_contents;
@@ -23,18 +24,22 @@ pub mod prelude {
     pub use crate::log_news_items_to_file;
     pub use crate::log_news_items_to_db;
     pub use crate::generate_dossier_report;
-    pub use crate::openai::summarize;
+    pub use crate::generate_feedback_records;
     pub use crate::read_feed;
     pub use crate::read_urls;
-    pub use crate::relevance::calculate_relevance;
     pub use crate::top_k_news_items;
     pub use crate::update_news_items_with_relevance;
     pub use crate::update_news_items_with_relevance_top_k;
-    pub use crate::write_news_items_to_csv;
+    pub use crate::openai::summarize;
+    pub use crate::relevance::calculate_relevance;
+    pub use crate::embeddings::{build_model_and_tokenizer, generate_embedding, generate_embeddings, DEFAULT_MODEL_ID, DEFAULT_REVISION};
+    pub use crate::storage::{write_feedback_records_parquet, write_news_items_to_csv};
+    
 }
 
 use crate::relevance::calculate_relevance;
-use common::{ChannelType, NewsItem, Operator, PipelineError};
+use common::{ChannelType, FeedbackRecord, NewsItem, Operator, PipelineError};
+use embeddings::{build_model_and_tokenizer, generate_embeddings};
 
 use std::{
     error::Error,
@@ -48,9 +53,6 @@ use html2text::config;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use rss::{Channel, Item};
-
-use std::fs::File;
-use csv::Writer;
 
 /// Function that reads a feed from a URL
 pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
@@ -496,7 +498,7 @@ pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
                 writeln!(file, "## Clean Content \n{}", clean_content).unwrap();
             }
             None => {
-                writeln!(file, "## Clean Content \nN/A").unwrap();
+                writeln!(file, "## Clean Content N/A").unwrap();
             }
         }
         writeln!(file).unwrap();
@@ -563,45 +565,6 @@ pub async fn log_relevance_report_to_file(report: &str, file: &str) -> Result<()
 
     writeln!(file, "{}", report)?;
 
-    Ok(())
-}
-
-/// Function that writes a slice of items to a CSV file
-pub fn write_news_items_to_csv(news_items: &[NewsItem], file: &str) -> Result<(), Box<dyn Error>> {
-    // Create a CSV writer that writes to the given file
-    let file = File::create(file)?;
-    let mut writer = Writer::from_writer(file);
-
-    // Write the header row
-    writer.write_record(&[
-        "Channel", "Title", "Link", "Description", "Creators", 
-        "Publication Date", "Categories", "Keywords", "Clean Content", 
-        "Error", "Feedback Date", "Relevance"
-    ])?;
-
-    // Feedback date with format: Sun, 01 Jan 2017 12:00:00 +0000
-    let feedback_date = chrono::Utc::now().to_rfc2822();
-
-    // Iterate over each NewsItem and write its fields to the CSV
-    for item in news_items {
-        writer.write_record(&[
-            &item.channel,
-            &item.title,
-            &item.link,
-            &item.description,
-            &item.creators,
-            item.pub_date.as_deref().unwrap_or(""),
-            item.categories.as_deref().unwrap_or(""),
-            item.keywords.as_deref().unwrap_or(""),
-            item.clean_content.as_deref().unwrap_or(""),
-            &format!("{:?}", item.error),
-            &feedback_date,
-            &item.relevance.map_or(String::new(), |r| r.to_string()),
-        ])?;
-    }
-
-    // Flush and finish writing
-    writer.flush()?;
     Ok(())
 }
 
@@ -677,7 +640,7 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
                 report.push_str(&format!("#### Clean Content \n{}", clean_content));
             }
             None => {
-                report.push_str("#### Clean Content \nN/A");
+                report.push_str("#### Clean Content N/A");
             }
         }
         report.push('\n');
@@ -822,6 +785,125 @@ pub async fn update_news_items_with_relevance_top_k(
 
     top_k_items
 }
+
+/// Function given a slice of NewsItems return a Vec of FeedbackRecords
+/// 
+/// Example:
+/// 
+/// ```rust
+/// use hemeroteca::generate_feedback_records;
+/// use hemeroteca::prelude::NewsItem;
+/// 
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// 
+/// let news_item_1 = NewsItem {
+///     error: None,
+///     creators: "".to_string(),
+///     categories: Some("Politics".to_string()),
+///     keywords: Some("Elections".to_string()),
+///     title: "President Elections".to_string(),
+///     description: "".to_string(),
+///     clean_content: None,
+///     channel: "".to_string(),
+///     link: "".to_string(),
+///     pub_date: None,
+///     relevance: None,
+/// };
+/// let news_item_2 = NewsItem {
+///     error: None,
+///     creators: "".to_string(),
+///     categories: Some("IA".to_string()),
+///     keywords: Some("Inteligencia Artificial".to_string()),
+///     title: "New LLM model released".to_string(),
+///     description: "".to_string(),
+///     clean_content: None,
+///     channel: "".to_string(),
+///     link: "".to_string(),
+///     pub_date: None,
+///     relevance: None,
+/// };
+/// let news_items = vec![news_item_1, news_item_2];
+/// let model_id = hemeroteca::prelude::DEFAULT_MODEL_ID.to_string();
+/// let revision = hemeroteca::prelude::DEFAULT_REVISION.to_string();
+/// let gpu = false;
+/// let use_pth = false;
+/// let normalize_embedding = false;
+/// let approximate_gelu = false;
+/// let feedback_records = generate_feedback_records(&news_items, model_id, revision, gpu, use_pth, normalize_embedding, approximate_gelu).await.unwrap();
+/// 
+/// assert_eq!(feedback_records.len(), 2);
+/// # }
+/// ```
+pub async fn generate_feedback_records(
+    news_items:&[NewsItem], 
+    model_id: &str, model_revision: &str, 
+    gpu: bool, use_pth: bool, normalize_embedding: bool, approximate_gelu: bool) -> anyhow::Result<Vec<FeedbackRecord>> {
+    
+    // Spawn tokio task for each NewsItem to generate embeddings for title and keywords+categories
+    let mut handles = Vec::new();
+    for item in news_items.iter() {
+        // Skip items with errors
+        if item.error.is_some() {
+            log::warn!("Skipping item with error: {:?}", item.error);
+            continue;
+        }
+        // Clone the item to move it into the async block
+        let item = item.clone();
+        let model_id = model_id.to_string();
+        let revision = model_revision.to_string();
+        // Spawn a blocking task for each item to generate embeddings a couple of embeddings (title and keywords+categories)
+        let handle: tokio::task::JoinHandle<Result<FeedbackRecord, anyhow::Error>> = tokio::spawn(async move {
+            let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
+            // Concatenate keywords and categories separated by spaces
+            let keywords_and_categories = join_keywords_and_categories(&item);
+            let sentences = vec![item.title.as_str(), keywords_and_categories.as_str()];
+            let embeddings = generate_embeddings(tokenizer, model, &sentences, normalize_embedding).await?;
+            
+            // Check that the embeddings have the correct dimensions
+            assert!(embeddings.dims()[0] == 2);
+
+            // Extract the title and keywords+categories embeddings
+            let title_embedding: Vec<f32>  = embeddings.narrow(0, 0, 1)?.to_vec2()?[0].clone();
+            log::trace!("title_embedding: {:?}", title_embedding);
+            
+            let keywords_and_categories_embedding: Vec<f32>  = embeddings.narrow(0, 1, 1)?.to_vec2()?[0].clone();
+            log::trace!("keywords_and_categories_embedding: {:?}", keywords_and_categories_embedding);
+            
+            Ok(FeedbackRecord {
+                news_item: item,
+                title_embedding: title_embedding,
+                keywords_and_categories_embedding: keywords_and_categories_embedding,
+            })
+        });
+        handles.push(handle);
+    }
+
+    let mut feedback_records = Vec::new();
+    for handle in handles {
+        if let Ok(result) = handle.await {
+            // Push the feedback record if the handle was Ok
+            feedback_records.push(result?);
+        }
+    }
+
+    Ok(feedback_records)
+
+}
+
+/// Function that joins keywords and categories of a NewsItem into a Vec<String> 
+/// then joins all the strings into a single string separated by spaces
+fn join_keywords_and_categories(item: &NewsItem) -> String {
+    let mut keywords_and_categories = Vec::new();
+    if let Some(keywords) = &item.keywords {
+        keywords_and_categories.push(keywords.clone());
+    }
+    if let Some(categories) = &item.categories {
+        keywords_and_categories.push(categories.clone());
+    }
+    keywords_and_categories.join(" ")
+}
+
 
 #[cfg(test)]
 mod tests {

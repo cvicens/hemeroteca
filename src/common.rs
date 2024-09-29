@@ -168,23 +168,11 @@ impl NewsItem {
     }
 }
 
-// /// Function that returns a String given an Option<PipelineError>
-// ///
-// /// Example:
-// /// ```
-// /// use hemeroteca::prelude::*;
-// ///
-// /// let error = PipelineError::EmptyString;
-// /// let error_str = error_to_string(&error);
-// /// assert_eq!(error_str, "EmptyString");
-// /// ```
-// pub fn error_to_string(error: &Option<PipelineError>) -> String {
-//     match error {
-//         Some(PipelineError::EmptyString) => "EmptyString".to_string(),
-//         Some(PipelineError::ParsingError(msg)) => format!("ParsingError: {}",
-// msg),         Some(PipelineError::NoContent) => "NoContent".to_string(),
-//         Some(PipelineError::NetworkError(msg)) => format!("NetworkError: {}",
-// msg),         Some(PipelineError::UnknownError) =>
-// "UnknownError".to_string(),         None => "None".to_string(),
-//     }
-// }
+/// Struct that represents a Feedback Record
+#[derive(Debug, Clone)]
+pub struct FeedbackRecord {
+    pub news_item: NewsItem,
+    pub title_embedding: Vec<f32>,
+    pub keywords_and_categories_embedding: Vec<f32>,
+}
+

@@ -77,17 +77,38 @@ enum Commands {
 
      // Feedback
      Feedback {
+        /// File name to save the feedback as parquet
+        #[arg(short, long, default_value = "feedback.parquet")]
+        file_name: String,
+
         /// Number of items to request feedback for
         #[arg(short, long, default_value = "20")]
         number: String,
 
-        /// File name to save the feedback as CSV
-        #[arg(short, long, default_value = "feedback.csv")]
-        file_name: String,
+        /// Model id
+        #[arg(long, default_value = "sentence-transformers/all-MiniLM-L6-v2")]
+        model_id: String,
+
+        /// Model revision
+        /// The revision of the model to use
+        #[arg(long, default_value = "refs/pr/21")]
+        model_revision: String,
 
         /// Run on CPU rather than on GPU.
         #[arg(long, default_value = "false")]
         gpu: bool,
+
+        /// Use PyTorch model
+        #[arg(long, default_value = "false")]
+        use_pth: bool,
+
+        /// Normalize embeddings
+        #[arg(long, default_value = "false")]
+        normalize_embedding: bool,
+
+        /// Approximate GELU
+        #[arg(long, default_value = "false")]
+        approximate_gelu: bool,
     },
 }
 
@@ -175,13 +196,16 @@ fn main() {
             let end: std::time::Duration = start.elapsed();
             log::info!("Time elapsed: {:?}", end);
         }
-        Some(Commands::Feedback {number, file_name, gpu}) => {
+        Some(Commands::Feedback {
+                file_name, number,
+                model_id, model_revision, 
+                gpu, use_pth, normalize_embedding, approximate_gelu}) => {
             let number = usize::from_str_radix(&number, 10);
             // If the number could be parsed
             if let Ok(number) = number {
                 log::info!("Requesting feedback for {} items", number);
                 rt.block_on( async {
-                    request_feedback_command(&root_folder, &feed_urls, number, &file_name, gpu).await;
+                    request_feedback_command(&root_folder, &feed_urls, number, &file_name, gpu, &model_id, &model_revision, use_pth, normalize_embedding, approximate_gelu).await;
                 });
                 let end: std::time::Duration = start.elapsed();
                 log::info!("Time elapsed: {:?}", end);
@@ -202,7 +226,9 @@ fn main() {
 /// - feed_urls: Vec<String> - The feed urls to read
 /// - number: String - The number of items to request feedback for
 /// - file_name: String - The name of the file to save the feedback as CSV
-async fn request_feedback_command(root_folder: &str, feed_urls: &[String], number: usize, file_name: &str, gpu: bool) {
+async fn request_feedback_command(
+    root_folder: &str, feed_urls: &[String], number: usize, file_name: &str, 
+    gpu: bool, model_id: &str, model_revision: &str, use_pth: bool, normalize_embedding: bool, approximate_gelu: bool) {
     // Vector to store the items read from the feeds
     let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
 
@@ -210,14 +236,8 @@ async fn request_feedback_command(root_folder: &str, feed_urls: &[String], numbe
     if let Some(items) = items {
         log::info!("Items read from the feeds: {:?}", items.len());
 
-        // Get the current date in the format YYYY-MM-DD-HH-MM-SS
-        let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
-
-        // Create the report folder name
-        let report_folder = format!("feedback_{}", current_date);
-
         // Define the folder path
-        let folder_path = Path::new(&root_folder).join(&report_folder);
+        let folder_path = Path::new(&root_folder);
 
         // Create the report folder
         std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
@@ -227,7 +247,7 @@ async fn request_feedback_command(root_folder: &str, feed_urls: &[String], numbe
 
         // Take the first n items and for each item, request relevance feedback and return a new Vec<NewsItem> with the new relevance
         let mut counter = 0;
-        let feedback_items = items.iter().take(number).filter_map(|item| {
+        let feedback_news_items = items.iter().take(number).filter_map(|item| {
             counter += 1;
             if let Some(relevance) = request_relevance_feedback(item, counter, number) {
                 Some(NewsItem {
@@ -239,15 +259,37 @@ async fn request_feedback_command(root_folder: &str, feed_urls: &[String], numbe
             }
         }).collect::<Vec<NewsItem>>();
         
-        // Write the feedback items to a CSV file
-        log::info!("Writing records to file: {}", feedback_file.to_str().unwrap());
-        if let Err(err) = write_news_items_to_csv(&feedback_items, feedback_file.to_str().unwrap()) {
-            log::error!("Failed to write feedback to CSV file: {}", err);
+        // If there are feedback news items
+        if !feedback_news_items.is_empty() {
+            log::info!("Feedback items: {:?}", feedback_news_items.len());
+
+            // Generate feedback records
+            let feedback_records = generate_feedback_records(&feedback_news_items, model_id, model_revision, gpu, use_pth, normalize_embedding, approximate_gelu).await;
+
+            // If the result is ok
+            if let Ok(feedback_records) = feedback_records {
+                // Write the feedback records to a Parquet file
+                log::info!("Writing records to file: {}", feedback_file.to_str().unwrap());
+                if let Err(err) = write_feedback_records_parquet(feedback_records, feedback_file.to_str().unwrap()) {
+                    log::error!("Failed to write feedback to Parquet file: {}", err);
+                }
+
+                // Write the feedback items to a CSV file
+                let csv_file = feedback_file.with_extension("csv");
+                log::info!("Writing records to file: {}", csv_file.to_str().unwrap());
+                if let Err(err) = write_news_items_to_csv(&feedback_news_items, csv_file.to_str().unwrap()) {
+                    log::error!("Failed to write feedback to CSV file: {}", err);
+                }
+            } else {
+                log::error!("Failed to generate feedback records! Exiting...");
+            }
+            
+        } else {
+            log::error!("No feedback items found! Exiting...");
         }
     } else {
         log::error!("No news items found! Exiting...");
     }
-
 }
 
 /// Function that requests relevance feedback for a news item.

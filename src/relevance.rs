@@ -1,7 +1,7 @@
 /// Module for relevance related functions
 use once_cell::sync::Lazy;
 
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet};
 use std::fmt::Display;
 
 use strsim::sorensen_dice;
@@ -31,15 +31,15 @@ static ROOT_WORDS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Relevance {
     pub error: bool,
-    pub relevance_core: u64,
-    pub relevance_content: u64,
+    pub relevance_core: f64,
+    pub relevance_content: f64,
     pub explanation: String,
     pub elapsed_time: f64,
 }
 
 impl Relevance {
     // Constructor for Relevance
-    pub fn new(relevance_core: (bool, u64, u64, u64, u64, u64), relevance_content: u64, elapsed_time: f64) -> Self {
+    pub fn new(relevance_core: (bool, f64, f64, f64, f64, f64), relevance_content: f64, elapsed_time: f64) -> Self {
         Self {
             error: relevance_core.0,
             relevance_core: relevance_core.1 + relevance_core.2 + relevance_core.3 + relevance_core.4 + relevance_core.5,
@@ -50,7 +50,7 @@ impl Relevance {
     }
 
     // Function to build the explanation of the relevance
-    fn build_explanation(error: bool, by_creator: u64, by_categories: u64, by_keyword: u64, by_title: u64, by_content: u64) -> String {
+    fn build_explanation(error: bool, by_creator: f64, by_categories: f64, by_keyword: f64, by_title: f64, by_content: f64) -> String {
         if error {
             "Error in the news item".to_string();
         }
@@ -61,31 +61,41 @@ impl Relevance {
     }
 
     // Function that returns the net relevance of a NewsItem
-    pub fn net_relevance(&self) -> u64 {
+    pub fn net_relevance(&self) -> f64 {
         self.relevance_core + self.relevance_content
     }
-    
 }
 
 impl Eq for Relevance {}
 
 impl PartialOrd for Relevance {
     // partial_cmp implementation for Relevance comparing by error, relevance_core adn relevance_content
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
+
 impl Ord for Relevance {
-    // cmp implementation for Relevance comparing by error, relevance_core adn relevance_content
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    // cmp implementation for Relevance comparing by error, relevance_core, and relevance_content
+    fn cmp(&self, other: &Self) -> Ordering {
+        // First compare the `error` field, which is a `bool` and implements `Ord`
         if self.error != other.error {
             return self.error.cmp(&other.error);
         }
-        if self.relevance_core != other.relevance_core {
-            return self.relevance_core.cmp(&other.relevance_core);
+
+        // Compare `relevance_core` using `partial_cmp` because `f64` does not implement `Ord`
+        match self.relevance_core.partial_cmp(&other.relevance_core) {
+            Some(Ordering::Equal) => {}
+            Some(ordering) => return ordering,
+            None => return Ordering::Equal, // Handle NaN values safely
         }
-        self.relevance_content.cmp(&other.relevance_content)
+
+        // Compare `relevance_content` using `partial_cmp` as well
+        match self.relevance_content.partial_cmp(&other.relevance_content) {
+            Some(ordering) => ordering,
+            None => Ordering::Equal, // Handle NaN values safely
+        }
     }
 }
 
@@ -128,69 +138,69 @@ fn similar_to_root_word(word: &str, coefficient: f64) -> bool {
 }
 
 /// Function that calculates the relevance_core of a NewsItem
-fn calculate_relevance_core(news_item: &NewsItem) -> (bool, u64, u64, u64, u64, u64) {
+fn calculate_relevance_core(news_item: &NewsItem) -> (bool, f64, f64, f64, f64, f64) {
     // If the new item has an error, return 0 relevance
     if news_item.error.is_some() {
-        return (true, 0, 0, 0, 0, 0);
+        return (true, 0.0, 0.0, 0.0, 0.0, 0.0);
     }
 
     // If the news item has a creator not empty, increase the relevance
     let relevance_by_creator = if !news_item.creators.is_empty() {
-        10
+        10.0
     } else {
-        0
+        0.0
     };
 
     // If any of the categories is similar to a root word, increase the relevance by 1 for each
     let relevance_by_categories = if let Some(categories) = &news_item.categories {
-        let mut relevance = 0;
+        let mut relevance = 0.0;
         for category in categories.split(",") {
             if similar_to_root_word(category, DICE_COEFFICIENT) {
-                relevance += 5;
+                relevance += 5.0;
             }
         }
         relevance
     } else {
-        0
+        0.0
     };
 
     // If any of the keywords is similar to a root word, increase the relevance by 1 for each
     let relevance_by_keywords = if let Some(keywords) = &news_item.keywords {
-        let mut relevance = 0;
+        let mut relevance = 0.0;
         for keyword in keywords.split(",") {
             if similar_to_root_word(keyword, DICE_COEFFICIENT) {
-                relevance += 5;
+                relevance += 5.0;
             }
         }
         relevance
     } else {
-        0
+        0.0
     };
 
     // f any of the word in the title is similar to a root word, increase the relevance by 1 for each
     let relevance_by_title = if !news_item.title.is_empty() {
-        let mut relevance = 0;
+        let mut relevance = 0.0;
         for word in news_item.title.split_whitespace() {
             if similar_to_root_word(word, DICE_COEFFICIENT) {
-                relevance += 10;
+                relevance += 10.0;
             }
         }
         relevance
     } else {
-        0
+        0.0
     };
 
     // If any of the word in the description is similar to a root word, increase the relevance by 1 for each
     let relevance_by_description = if !news_item.description.is_empty() {
-        let mut relevance = 0;
+        let mut relevance = 0.0;
         for word in news_item.description.split_whitespace() {
             if similar_to_root_word(word, DICE_COEFFICIENT) {
-                relevance += 1;
+                relevance += 1.0;
             }
         }
         relevance
     } else {
-        0
+        0.0
     };
 
     (false, relevance_by_creator, relevance_by_categories, relevance_by_keywords, relevance_by_title, relevance_by_description)
@@ -206,19 +216,19 @@ pub async fn calculate_relevance(news_item: &NewsItem) -> Relevance {
 
     // If the news item has an error, return 0 relevance
     if relevance_core.0 {
-        Relevance::new(relevance_core, 0, 0.0)
+        Relevance::new(relevance_core, 0.0, 0.0)
     } else {
         // If the news item has a clean content, increase the relevance
         let relevance_content = if let Some(clean_content) = &news_item.clean_content {
-            let mut relevance = 0;
+            let mut relevance = 0.0;
             for word in clean_content.split_whitespace() {
                 if similar_to_root_word(word, DICE_COEFFICIENT) {
-                    relevance += 1;
+                    relevance += 1.0;
                 }
             }
             relevance
         } else {
-            0
+            0.0
         };
 
         let elapsed_time = start.elapsed().as_secs_f64();
@@ -264,7 +274,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_error), (true, 0, 0, 0, 0, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_error), (true, 0.0, 0.0, 0.0, 0.0, 0.0));
         
         let news_item_with_creators = NewsItem {
             error: None,
@@ -279,7 +289,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_creators), (false, 10, 0, 0, 0, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_creators), (false, 10.0, 0.0, 0.0, 0.0, 0.0));
         
         let news_item_with_categories = NewsItem {
             error: None,
@@ -294,7 +304,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_categories), (false, 0, 10, 0, 0, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_categories), (false, 0.0, 10.0, 0.0, 0.0, 0.0));
         
         let news_item_with_keywords = NewsItem {
             error: None,
@@ -309,7 +319,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_keywords), (false, 0, 0, 15, 0, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_keywords), (false, 0.0, 0.0, 15.0, 0.0, 0.0));
         
         let news_item_with_title = NewsItem {
             error: None,
@@ -324,7 +334,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_title), (false, 0, 0, 0, 20, 0));
+        assert_eq!(calculate_relevance_core(&news_item_with_title), (false, 0.0, 0.0, 0.0, 20.0, 0.0));
         
         let news_item_with_description = NewsItem {
             error: None,
@@ -339,7 +349,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_description), (false, 0, 0, 0, 0, 2));
+        assert_eq!(calculate_relevance_core(&news_item_with_description), (false, 0.0, 0.0, 0.0, 0.0, 2.0));
 
         let news_item_with_description = NewsItem {
             error: None,
@@ -354,7 +364,7 @@ mod tests {
             pub_date: None,
             relevance: None,
         };
-        assert_eq!(calculate_relevance_core(&news_item_with_description), (false, 10, 0, 0, 0, 2));
+        assert_eq!(calculate_relevance_core(&news_item_with_description), (false, 10.0, 0.0, 0.0, 0.0, 2.0));
     }
     
     #[tokio::test]

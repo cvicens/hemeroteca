@@ -33,7 +33,7 @@ pub mod prelude {
     pub use crate::openai::summarize;
     pub use crate::relevance::calculate_relevance;
     pub use crate::embeddings::{build_model_and_tokenizer, generate_embedding, generate_embeddings, DEFAULT_MODEL_ID, DEFAULT_REVISION};
-    pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv};
+    pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv, read_feedback_records_from_parquet};
     
 }
 
@@ -428,7 +428,7 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
 //     news_items.into_iter().take(top_k as usize).collect()
 // }
 
-/// Function that returns the top k news items
+/// Function that returns the top k news items based on their relevance
 pub async fn top_k_news_items(top_k: u8, news_items:&[NewsItem]) -> Vec<NewsItem> {
     // The top k news items are the ones with the highest relevance
     let mut handles = Vec::new();
@@ -472,7 +472,7 @@ pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
 
     // Order the news items by relevance
     let mut news_items = news_items.to_owned();
-    news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+    news_items.sort_by(|a, b| a.cmp_relevance(b));
 
     // Write table of contents
     writeln!(file, "# Table of Contents").unwrap();
@@ -512,7 +512,7 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
 
     // Order the news items by relevance
     let mut news_items = news_items.to_owned();
-    news_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+    news_items.sort_by(|a, b| a.cmp_relevance(b));
 
     // Write table of contents
     report.push_str("# Relevance Report\n");
@@ -776,7 +776,15 @@ pub async fn update_news_items_with_relevance_top_k(
     );
 
     // Order updated items by relevance and take the top 100
-    updated_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+    // updated_items.sort_by(|a, b| b.relevance.cmp(&a.relevance));
+    updated_items.sort_by(|a, b| {
+        match (b.relevance, a.relevance) {
+            (Some(b_relevance), Some(a_relevance)) => b_relevance.partial_cmp(&a_relevance).unwrap(),
+            (None, Some(_)) => std::cmp::Ordering::Greater, // Treat `None` as smallest
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
 
     // Take the top k items
     let top_k_items = updated_items.into_iter().take(k).collect::<Vec<NewsItem>>();
@@ -799,27 +807,27 @@ pub async fn update_news_items_with_relevance_top_k(
 /// 
 /// let news_item_1 = NewsItem {
 ///     error: None,
-///     creators: "".to_string(),
+///     creators: "Creator".to_string(),
 ///     categories: Some("Politics".to_string()),
 ///     keywords: Some("Elections".to_string()),
 ///     title: "President Elections".to_string(),
-///     description: "".to_string(),
+///     description: "Description".to_string(),
 ///     clean_content: None,
-///     channel: "".to_string(),
-///     link: "".to_string(),
+///     channel: "Channel".to_string(),
+///     link: "http://example.com".to_string(),
 ///     pub_date: None,
 ///     relevance: None,
 /// };
 /// let news_item_2 = NewsItem {
 ///     error: None,
-///     creators: "".to_string(),
+///     creators: "Creator".to_string(),
 ///     categories: Some("IA".to_string()),
 ///     keywords: Some("Inteligencia Artificial".to_string()),
 ///     title: "New LLM model released".to_string(),
 ///     description: "".to_string(),
 ///     clean_content: None,
-///     channel: "".to_string(),
-///     link: "".to_string(),
+///     channel: "Channel".to_string(),
+///     link: "http://example.com".to_string(),
 ///     pub_date: None,
 ///     relevance: None,
 /// };
@@ -830,7 +838,7 @@ pub async fn update_news_items_with_relevance_top_k(
 /// let use_pth = false;
 /// let normalize_embedding = false;
 /// let approximate_gelu = false;
-/// let feedback_records = generate_feedback_records(&news_items, model_id, revision, gpu, use_pth, normalize_embedding, approximate_gelu).await.unwrap();
+/// let feedback_records = generate_feedback_records(&news_items, &model_id, &revision, gpu, use_pth, normalize_embedding, approximate_gelu).await.unwrap();
 /// 
 /// assert_eq!(feedback_records.len(), 2);
 /// # }

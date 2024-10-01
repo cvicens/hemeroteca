@@ -1,5 +1,5 @@
 /// Common types and utilities used across the library
-use std::{error::Error, str::FromStr};
+use std::{cmp::Ordering, error::Error, str::FromStr};
 
 /// Constants
 pub const DEFAULT_CONFIG_FOLDER_NAME: &str = ".hemeroteca";
@@ -35,7 +35,7 @@ pub struct NewsItem {
     pub keywords: Option<String>,
     pub clean_content: Option<String>,
     pub error: Option<PipelineError>,
-    pub relevance: Option<u64>,
+    pub relevance: Option<f64>,
 }
 
 // Define a custom error type for the pipeline
@@ -165,6 +165,33 @@ impl NewsItem {
             error: None,
             relevance: None,
         })
+    }
+
+    // Function that creates a default NewsItem
+    pub fn default(relevance: Option<f64>) -> Self {
+        NewsItem {
+            channel: "Channel".to_string(),
+            title: "Title".to_string(),
+            link: "http://example.com".to_string(),
+            description: "Description".to_string(),
+            creators: "Creator1, Creator2".to_string(),
+            pub_date: Some("2021-01-01T00:00:00+0000".to_string()),
+            categories: Some("Category1, Category2".to_string()),
+            keywords: Some("Keyword1, Keyword2".to_string()),
+            clean_content: Some("Content".to_string()),
+            error: None,
+            relevance: relevance,
+        }
+    }
+
+    // Function to cmp Option<f64> values
+    pub fn cmp_relevance(&self, other: &Self) -> Ordering {
+        match (self.relevance, other.relevance) {
+            (Some(a), Some(b)) => a.partial_cmp(&b).unwrap(),
+            (Some(_), None) => Ordering::Greater,
+            (None, Some(_)) => Ordering::Less,
+            (None, None) => Ordering::Equal,
+        }
     }
 }
 

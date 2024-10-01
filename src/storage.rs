@@ -206,12 +206,12 @@ pub fn write_feedback_records_to_csv(records: &Vec<FeedbackRecord>, file: &str) 
             &record.news_item.channel,
             &record.news_item.title,
             &record.news_item.link,
-            "", // &record.news_item.description, <- skipped for now
+            &record.news_item.description,
             &record.news_item.creators,
             record.news_item.pub_date.as_deref().unwrap_or(""),
             record.news_item.categories.as_deref().unwrap_or(""),
             record.news_item.keywords.as_deref().unwrap_or(""),
-            "", //record.news_item.clean_content.as_deref().unwrap_or(""), <- skipped for now
+            record.news_item.clean_content.as_deref().unwrap_or(""),
             &format!("{:?}", record.news_item.error),
             &feedback_date,
             &record.news_item.relevance.map_or(String::new(), |r| r.to_string()),
@@ -254,10 +254,13 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     // Extract relevant fields from FeedbackRecords
     let mut channels = vec![];
     let mut titles = vec![];
+    let mut links = vec![];
+    let mut descriptions = vec![];
     let mut creators = vec![];
     let mut pub_dates = vec![];
     let mut categories = vec![];
     let mut keywords = vec![];
+    let mut contents = vec![];
     let mut relevances = vec![];
     let mut title_embeddings_flattened = vec![];
     let mut keywords_and_categories_embeddings_flattened = vec![];
@@ -275,11 +278,14 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     for record in records.iter() {
         channels.push(record.news_item.channel.clone());
         titles.push(record.news_item.title.clone());
+        links.push(record.news_item.link.clone());
+        descriptions.push(record.news_item.description.clone());
         creators.push(record.news_item.creators.clone());
         pub_dates.push(record.news_item.pub_date.clone().unwrap_or_default());
         categories.push(record.news_item.categories.clone().unwrap_or_default());
         keywords.push(record.news_item.keywords.clone().unwrap_or_default());
-        relevances.push(record.news_item.relevance.unwrap_or_default() as f32); // Handle relevance as f32
+        contents.push(record.news_item.clean_content.clone().unwrap_or_default());
+        relevances.push(record.news_item.relevance.unwrap_or_default());
         
         // Handle embeddings (flatten Option<Vec<f32>> to Vec<f32>)
         title_embeddings_flattened.extend(record.title_embedding.clone());
@@ -293,11 +299,14 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     // Create Arrow arrays
     let channel_array = StringArray::from(channels);
     let title_array = StringArray::from(titles);
+    let link_array = StringArray::from(links);
+    let description_array = StringArray::from(descriptions);
     let creator_array = StringArray::from(creators);
     let pub_date_array = StringArray::from(pub_dates);
     let categories_array = StringArray::from(categories);
     let keywords_array = StringArray::from(keywords);
-    let relevance_array = arrow::array::Float32Array::from(relevances);
+    let content_array = StringArray::from(contents);
+    let relevance_array = arrow::array::Float64Array::from(relevances);
 
     // ----- Title Embedding column: FixedSizeList of f32 -----
     let (title_embeddings_array, title_embeddings_array_type) = create_fixed_size_list_array_of_floats(&title_embeddings_flattened, embeddings_list_size as i32, records.len());
@@ -310,11 +319,14 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     let schema = Arc::new(Schema::new(vec![
         Field::new("channel", DataType::Utf8, false),
         Field::new("title", DataType::Utf8, false),
+        Field::new("link", DataType::Utf8, false),
+        Field::new("description", DataType::Utf8, false),
         Field::new("creators", DataType::Utf8, false),
         Field::new("pub_date", DataType::Utf8, false),
         Field::new("categories", DataType::Utf8, false),
         Field::new("keywords", DataType::Utf8, false),
-        Field::new("relevance", DataType::Float32, false),
+        Field::new("content", DataType::Utf8, false),
+        Field::new("relevance", DataType::Float64, false),
         Field::new("title_embedding", title_embeddings_array_type.clone(), true),
         Field::new("keywords_and_categories_embedding", keywords_and_categories_embeddings_array_type.clone(), true),
     ]));
@@ -325,10 +337,13 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
         vec![
             Arc::new(channel_array) as ArrayRef,
             Arc::new(title_array) as ArrayRef,
+            Arc::new(link_array) as ArrayRef,
+            Arc::new(description_array) as ArrayRef,
             Arc::new(creator_array) as ArrayRef,
             Arc::new(pub_date_array) as ArrayRef,
             Arc::new(categories_array) as ArrayRef,
             Arc::new(keywords_array) as ArrayRef,
+            Arc::new(content_array) as ArrayRef,
             Arc::new(relevance_array) as ArrayRef,
             Arc::new(title_embeddings_array) as ArrayRef,
             Arc::new(keywords_and_categories_embeddings_array) as ArrayRef,
@@ -405,9 +420,9 @@ fn create_fixed_size_list_array_of_floats(embeddings_flattened: &[f32], list_siz
         .build()
         .unwrap();
 
-    // Define a FixedSizeList of Float32 type, where each list has exactly list_size items
+    // Define a FixedSizeList of Float64 type, where each list has exactly list_size items
     let list_data_type = DataType::FixedSizeList(
-        Arc::new(Field::new("item", DataType::Float32, false)),  // Each list contains Float32 values
+        Arc::new(Field::new("item", DataType::Float32, false)),  // Each list contains f32 values
         list_size,  // Each list contains list_size elements
     );
 
@@ -421,4 +436,211 @@ fn create_fixed_size_list_array_of_floats(embeddings_flattened: &[f32], list_siz
     let list_array = FixedSizeListArray::from(list_data);
 
     (list_array, list_data_type)
+}
+
+/// Function that reads feedback records from a parquet file
+/// 
+/// Example:
+/// 
+/// ```rust
+/// use hemeroteca::prelude::read_feedback_records_from_parquet;
+/// 
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// 
+/// use hemeroteca::prelude::*;
+/// use std::fs::remove_file;
+/// 
+/// let records = vec![
+/// FeedbackRecord {
+///     news_item: NewsItem::default(Some(1.0)),
+///     title_embedding: vec![1.0, 2.0, 3.0],
+///     keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+/// },
+/// FeedbackRecord {
+///     news_item: NewsItem::default(Some(4.0)),
+///     title_embedding: vec![7.0, 8.0, 9.0],
+///     keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+/// },
+/// ];
+/// 
+/// let file = "test.parquet";
+/// let result = write_feedback_records_parquet(&records, file);
+/// assert_eq!(result.is_ok(), true);
+/// 
+/// let feedback_records = read_feedback_records_from_parquet(file).await.unwrap();
+/// assert_eq!(feedback_records.len(), 2);
+/// 
+/// // Clean up
+/// remove_file(file).unwrap();
+/// # }
+/// ```
+pub async fn read_feedback_records_from_parquet(file: &str) -> anyhow::Result<Vec<FeedbackRecord>> {
+    // Open the file
+    let file = File::open(file)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    log::debug!("Converted arrow schema is: {}", builder.schema());
+
+    let reader = builder.build()?;
+
+    // Iterate the reader to get the existing batches, print the number of rows or errors and return a Vec<RecordBatch>
+    let feedback_records = reader.into_iter().filter_map(|result| match result {
+        Ok(batch) => {
+            println!("Read {} records.", batch.num_rows());
+            Some(batch)
+        }
+        Err(e) => {
+            println!("Error reading batch: {}", e);
+            None
+        }
+    })
+    .filter_map(|batch| {
+        let channel = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
+        let title = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+        let link = batch.column(2).as_any().downcast_ref::<StringArray>().unwrap();
+        let description = batch.column(3).as_any().downcast_ref::<StringArray>().unwrap();
+        let creators = batch.column(4).as_any().downcast_ref::<StringArray>().unwrap();
+        let pub_date = batch.column(5).as_any().downcast_ref::<StringArray>().unwrap();
+        let categories = batch.column(6).as_any().downcast_ref::<StringArray>().unwrap();
+        let keywords = batch.column(7).as_any().downcast_ref::<StringArray>().unwrap();
+        let content = batch.column(8).as_any().downcast_ref::<StringArray>().unwrap();
+        let relevance = batch.column(9).as_any().downcast_ref::<arrow::array::Float64Array>().unwrap();
+        let title_embeddings = batch.column(10).as_any().downcast_ref::<FixedSizeListArray>().unwrap();
+        let keywords_and_categories_embeddings = batch.column(11).as_any().downcast_ref::<FixedSizeListArray>().unwrap();
+
+        let feedback_records = (0..batch.num_rows()).map(|i| {
+            let title_embedding = title_embeddings.value(i).as_any().downcast_ref::<arrow::array::Float32Array>().unwrap().values().to_vec();
+            let keywords_and_categories_embedding = keywords_and_categories_embeddings.value(i).as_any().downcast_ref::<arrow::array::Float32Array>().unwrap().values().to_vec();
+
+            FeedbackRecord {
+                news_item: NewsItem {
+                    channel: channel.value(i).to_string(),
+                    title: title.value(i).to_string(),
+                    link: link.value(i).to_string(),
+                    description: description.value(i).to_string(),
+                    creators: creators.value(i).to_string(),
+                    pub_date: Some(pub_date.value(i).to_string()),
+                    categories: Some(categories.value(i).to_string()),
+                    keywords: Some(keywords.value(i).to_string()),
+                    relevance: Some(relevance.value(i)),
+                    clean_content: Some(content.value(i).to_string()),
+                    error: None,
+                },
+                title_embedding,
+                keywords_and_categories_embedding,
+            }
+        }).collect::<Vec<FeedbackRecord>>();
+
+        Some(feedback_records)
+    })
+    .flatten()
+    .collect::<Vec<FeedbackRecord>>();
+
+    Ok(feedback_records)
+}
+
+mod test {
+    
+    #[test]
+    fn test_news_item_binds() {
+        use super::NewsItem;
+
+        let news_item = NewsItem {
+            channel: "Channel".to_string(),
+            title: "Title".to_string(),
+            link: "Link".to_string(),
+            description: "Description".to_string(),
+            pub_date: Some("Date".to_string()),
+            categories: Some("Categories".to_string()),
+            keywords: Some("Keywords".to_string()),
+            clean_content: Some("Clean Content".to_string()),
+            creators: "John Doe".to_string(),
+            error: None,
+            relevance: None,
+        };
+
+        let binds = news_item.binds();
+        assert_eq!(binds.len(), 10);
+    }
+
+    #[test]
+    fn test_write_feedback_records_to_csv() {
+        use super::{FeedbackRecord, NewsItem};
+        use std::fs::remove_file;
+
+        let records = vec![
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(4.0)),
+                title_embedding: vec![1.0, 2.0, 3.0],
+                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+            },
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(4.0)),
+                title_embedding: vec![7.0, 8.0, 9.0],
+                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+            },
+        ];
+
+        let file = "test-write.csv";
+        let result = super::write_feedback_records_to_csv(&records, file);
+        assert_eq!(result.is_ok(), true);
+
+        // Clean up
+        remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn test_write_feedback_records_parquet() {
+        use super::{FeedbackRecord, NewsItem};
+        use std::fs::remove_file;
+
+        let records = vec![
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(4.0)),
+                title_embedding: vec![1.0, 2.0, 3.0],
+                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+            },
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(5.0)),
+                title_embedding: vec![7.0, 8.0, 9.0],
+                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+            },
+        ];
+
+        let file = "test-write.parquet";
+        let result = super::write_feedback_records_parquet(&records, file);
+        assert_eq!(result.is_ok(), true);
+
+        // Clean up
+        remove_file(file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_feedback_records_from_parquet() {
+        use super::{FeedbackRecord, NewsItem};
+        use std::fs::remove_file;
+
+        let records = vec![
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(1.0)),
+                title_embedding: vec![1.0, 2.0, 3.0],
+                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+            },
+            FeedbackRecord {
+                news_item: NewsItem::default(Some(4.0)),
+                title_embedding: vec![7.0, 8.0, 9.0],
+                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+            },
+        ];
+
+        let file = "test-read.parquet";
+        let result = super::write_feedback_records_parquet(&records, file);
+        assert_eq!(result.is_ok(), true);
+
+        let feedback_records = super::read_feedback_records_from_parquet(file).await.unwrap();
+        assert_eq!(feedback_records.len(), 2);
+
+        // Clean up
+        remove_file(file).unwrap();
+    }
 }

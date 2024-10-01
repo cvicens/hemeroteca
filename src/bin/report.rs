@@ -294,7 +294,7 @@ async fn request_feedback_command(
 
 /// Function that requests relevance feedback for a news item.
 /// Relevance feedback is an integer from 1 to 5, zero to skip.
-fn request_relevance_feedback(item: &NewsItem, count: usize, number: usize) -> Option<u64> {
+fn request_relevance_feedback(item: &NewsItem, count: usize, number: usize) -> Option<f64> {
     // Print the item to the console
     println!("\n====================================");
 
@@ -344,10 +344,10 @@ fn request_relevance_feedback(item: &NewsItem, count: usize, number: usize) -> O
             break None;
         }
 
-        let relevance = relevance.trim().parse::<u64>();
+        let relevance = relevance.trim().parse::<f64>();
         match relevance {
             Ok(relevance) => {
-                if relevance >= 1 && relevance <= 5 {
+                if relevance >= 1.0 && relevance <= 5.0 {
                     break Some(relevance);
                 } else {
                     println!("Relevance feedback must be between 1 and 5!");

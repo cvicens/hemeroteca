@@ -30,14 +30,38 @@ impl FloatType for f64 {
     }
 }
 
-pub async fn cosine_similarity<T: FloatType + WithDType>(a: Tensor, b: Tensor) -> anyhow::Result<T> {
+pub fn vec_to_tensor<T: FloatType + WithDType>(v: &Vec<T>, gpu: bool) -> anyhow::Result<Tensor> {
+    let device = if gpu {
+        Device::Cuda(CudaDevice)
+    } else {
+        Device::Cpu
+    };
+    Ok(Tensor::new(&v[..], &device)?)
+}
+
+pub async fn cosine_similarity<T: FloatType + WithDType>(a: &Tensor, b: &Tensor) -> anyhow::Result<T> {
+    let sum_ab = (a * b)?.sum_all()?.to_scalar::<T>()?;
+    let sum_a2 = (a * a)?.sum_all()?.to_scalar::<T>()?;
+    let sum_b2 = (b * b)?.sum_all()?.to_scalar::<T>()?;
+    Ok(sum_ab / (sum_a2 * sum_b2).sqrt())
+}
+
+pub async fn cosine_similarity_vec<T: FloatType + WithDType>(a: &Vec<T>, b: &Vec<T>, gpu: bool) -> anyhow::Result<T> {
+    let device = if gpu {
+        Device::Cuda(CudaDevice)
+    } else {
+        Device::Cpu
+    };
+    let a = Tensor::new(&a[..], &device)?;
+    let b = Tensor::new(&b[..], &device)?;
+
     let sum_ab = (&a * &b)?.sum_all()?.to_scalar::<T>()?;
     let sum_a2 = (&a * &a)?.sum_all()?.to_scalar::<T>()?;
     let sum_b2 = (&b * &b)?.sum_all()?.to_scalar::<T>()?;
     Ok(sum_ab / (sum_a2 * sum_b2).sqrt())
 }
 
-pub async fn generate_embeddings(mut tokenizer: Tokenizer, model: BertModel, sentences: &Vec<&str>, normalize_embeddings: bool) -> anyhow::Result<Tensor> {
+pub async fn generate_embeddings(mut tokenizer: Tokenizer, model: BertModel, sentences: &[&str], normalize_embeddings: bool) -> anyhow::Result<Tensor> {
     if let Some(pp) = tokenizer.get_padding_mut() {
         pp.strategy = tokenizers::PaddingStrategy::BatchLongest
     } else {
@@ -81,7 +105,63 @@ pub async fn generate_embeddings(mut tokenizer: Tokenizer, model: BertModel, sen
     }
 }
 
-pub async fn generate_embedding(mut tokenizer: Tokenizer, model: BertModel, prompt: String, normalize_embedding: bool) -> anyhow::Result<Tensor> {
+/// Generate embeddings for a list of sentences, returning a vector of tensors.
+pub async fn generate_embeddings_for_sentences(mut tokenizer: Tokenizer, model: BertModel, sentences: &[&str], normalize_embeddings: bool) -> anyhow::Result<Vec<Tensor>> {
+    if let Some(pp) = tokenizer.get_padding_mut() {
+        pp.strategy = tokenizers::PaddingStrategy::BatchLongest
+    } else {
+        let pp = PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        };
+        tokenizer.with_padding(Some(pp));
+    }
+    let tokens = tokenizer
+        .encode_batch(sentences.to_vec(), true)
+        .map_err(anyhow::Error::msg)?;
+    let token_ids = tokens
+        .iter()
+        .map(|tokens| {
+            let tokens = tokens.get_ids().to_vec();
+            Ok(Tensor::new(tokens.as_slice(), &model.device)?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let attention_mask = tokens
+        .iter()
+        .map(|tokens| {
+            let tokens = tokens.get_attention_mask().to_vec();
+            Ok(Tensor::new(tokens.as_slice(), &model.device)?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let token_ids = Tensor::stack(&token_ids, 0)?;
+    let _attention_mask = Tensor::stack(&attention_mask, 0)?;
+    let token_type_ids = token_ids.zeros_like()?;
+    log::trace!("running inference on batch {:?}", token_ids.shape());
+    let embeddings = model.forward(&token_ids, &token_type_ids)?;
+    log::trace!("generated embeddings {:?}", embeddings.shape());
+    // Apply some avg-pooling by taking the mean embedding value for all tokens (including padding)
+    let (_n_sentence, n_tokens, _hidden_size) = embeddings.dims3()?;
+    let embeddings = (embeddings.sum(1)? / (n_tokens as f64))?;
+    let embeddings = if normalize_embeddings {
+        normalize_l2(&embeddings)?
+    } else {
+        embeddings
+    };
+    // The number of sentences has be equal to the number of embeddings generated
+    assert!(embeddings.dims()[0] == sentences.len());
+
+    // I want to return a vector of Tensors instead of a single Tensor
+    // I will split the embeddings tensor into a vector of tensors with embeddings.narrow(0, i, 1)? i ranging from 0 to n_sentences
+    let mut embeddings_vec = Vec::new();
+    for i in 0.._n_sentence {
+        let embedding = embeddings.narrow(0, i, 1)?;
+        embeddings_vec.push(embedding);
+    }
+    Ok(embeddings_vec)
+}
+
+pub async fn generate_embedding(mut tokenizer: Tokenizer, model: &BertModel, prompt: &str, normalize_embedding: bool) -> anyhow::Result<Tensor> {
     let tokenizer = tokenizer
             .with_padding(None)
             .with_truncation(None)
@@ -155,13 +235,6 @@ mod tests {
         let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
         let sentences = vec!["Hello, my dog is cute.", "Hello, my cat is cute."];
         let embeddings = generate_embeddings(tokenizer, model, &sentences, true).await?;
-        // Print embeddings
-        println!("embeddings {:?}", embeddings);
-
-        // Extract the embedding of the first sentence
-        let first_embedding = embeddings.narrow(0, 0, 1)?; // Narrow along the first dimension (0), selecting index 0 with length 1
-        println!("first_embedding {:?}", first_embedding);
-
 
         assert_eq!(*embeddings.shape(), Shape::from(&[2, 384]));
         Ok(())
@@ -177,7 +250,7 @@ mod tests {
         let normalize_embedding = true;
         let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
         let prompt = "The movie is awesome".to_string();
-        let embedding = generate_embedding(tokenizer, model, prompt, normalize_embedding).await?;
+        let embedding = generate_embedding(tokenizer, &model, &prompt, normalize_embedding).await?;
         assert_eq!(*embedding.shape(), Shape::from(&[1, 6, 384]));
         Ok(())
     }
@@ -209,7 +282,7 @@ mod tests {
     async fn test_cosine_similarity_f32() -> anyhow::Result<()> {
         let a = Tensor::new(&[1.0f32, 2.0, 3.0], &Device::Cpu)?;
         let b = Tensor::new(&[1.0f32, 2.0, 3.0], &Device::Cpu)?;
-        let similarity = cosine_similarity::<f32>(a, b).await?;
+        let similarity = cosine_similarity::<f32>(&a, &b).await?;
         assert_eq!(similarity, 1.0f32);
         Ok(())
     }
@@ -218,7 +291,25 @@ mod tests {
     async fn test_cosine_similarity_f64() -> anyhow::Result<()> {
         let a = Tensor::new(&[1.0f64, 2.0, 3.0], &Device::Cpu)?;
         let b = Tensor::new(&[1.0f64, 2.0, 3.0], &Device::Cpu)?;
-        let similarity = cosine_similarity::<f64>(a, b).await?;
+        let similarity = cosine_similarity::<f64>(&a, &b).await?;
+        assert_eq!(similarity, 1.0f64);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cosine_similarity_vec_f32() -> anyhow::Result<()> {
+        let a = vec![1.0f32, 2.0, 3.0];
+        let b = vec![1.0f32, 2.0, 3.0];
+        let similarity = cosine_similarity_vec::<f32>(&a, &b, false).await?;
+        assert_eq!(similarity, 1.0f32);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cosine_similarity_vec_f64() -> anyhow::Result<()> {
+        let a = vec![1.0f64, 2.0, 3.0];
+        let b = vec![1.0f64, 2.0, 3.0];
+        let similarity = cosine_similarity_vec::<f64>(&a, &b, false).await?;
         assert_eq!(similarity, 1.0f64);
         Ok(())
     }

@@ -236,7 +236,6 @@ pub async fn calculate_relevance(news_item: &NewsItem) -> Relevance {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

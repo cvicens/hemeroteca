@@ -216,7 +216,7 @@ pub fn write_feedback_records_to_csv(records: &Vec<FeedbackRecord>, file: &str) 
             &feedback_date,
             &record.news_item.relevance.map_or(String::new(), |r| r.to_string()),
             &record.title_embedding.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(","),
-            &record.keywords_and_categories_embedding.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(","),
+            &record.bow_embedding.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(","),
         ])?;
     }
 
@@ -266,13 +266,13 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
     let mut keywords_and_categories_embeddings_flattened = vec![];
 
     // Assert that the title and keyword and catergories embeddings have the same size
-    assert!(records[0].title_embedding.len() == records[0].keywords_and_categories_embedding.len());
+    assert!(records[0].title_embedding.len() == records[0].bow_embedding.len());
 
     let embeddings_list_size = records[0].title_embedding.len();
 
     // Assert that the keywords and categories embeddings have the same size
     assert!(records.iter().all(|record| record.title_embedding.len() == embeddings_list_size));
-    assert!(records.iter().all(|record| record.keywords_and_categories_embedding.len() == embeddings_list_size));
+    assert!(records.iter().all(|record| record.bow_embedding.len() == embeddings_list_size));
 
     // Iterate over the records and extract the fields
     for record in records.iter() {
@@ -289,7 +289,7 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
         
         // Handle embeddings (flatten Option<Vec<f32>> to Vec<f32>)
         title_embeddings_flattened.extend(record.title_embedding.clone());
-        keywords_and_categories_embeddings_flattened.extend(record.keywords_and_categories_embedding.clone());
+        keywords_and_categories_embeddings_flattened.extend(record.bow_embedding.clone());
         
         // Print length of all columns
         log::debug!("Channels: {}, Titles: {}, Creators: {}, Pub Dates: {}, Categories: {}, Keywords: {}, Relevances: {}, Title Embeddings: {}, Keywords and Categories Embeddings: {}", 
@@ -364,11 +364,11 @@ pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str)
         // Iterate the reader to get the existing batches, print the number of rows or errors and return a Vec<RecordBatch>
         let mut existing_batches = reader.into_iter().filter_map(|result| match result {
             Ok(batch) => {
-                println!("Read {} records.", batch.num_rows());
+                log::debug!("Read {} records.", batch.num_rows());
                 Some(batch)
             }
             Err(e) => {
-                println!("Error reading batch: {}", e);
+                log::debug!("Error reading batch: {}", e);
                 None
             }
         })
@@ -455,12 +455,12 @@ fn create_fixed_size_list_array_of_floats(embeddings_flattened: &[f32], list_siz
 /// FeedbackRecord {
 ///     news_item: NewsItem::default(Some(1.0)),
 ///     title_embedding: vec![1.0, 2.0, 3.0],
-///     keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+///     bow_embedding: vec![4.0, 5.0, 6.0],
 /// },
 /// FeedbackRecord {
 ///     news_item: NewsItem::default(Some(4.0)),
 ///     title_embedding: vec![7.0, 8.0, 9.0],
-///     keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+///     bow_embedding: vec![10.0, 11.0, 12.0],
 /// },
 /// ];
 /// 
@@ -486,11 +486,11 @@ pub async fn read_feedback_records_from_parquet(file: &str) -> anyhow::Result<Ve
     // Iterate the reader to get the existing batches, print the number of rows or errors and return a Vec<RecordBatch>
     let feedback_records = reader.into_iter().filter_map(|result| match result {
         Ok(batch) => {
-            println!("Read {} records.", batch.num_rows());
+            log::debug!("Read {} records.", batch.num_rows());
             Some(batch)
         }
         Err(e) => {
-            println!("Error reading batch: {}", e);
+            log::debug!("Error reading batch: {}", e);
             None
         }
     })
@@ -527,7 +527,7 @@ pub async fn read_feedback_records_from_parquet(file: &str) -> anyhow::Result<Ve
                     error: None,
                 },
                 title_embedding,
-                keywords_and_categories_embedding,
+                bow_embedding: keywords_and_categories_embedding,
             }
         }).collect::<Vec<FeedbackRecord>>();
 
@@ -572,12 +572,12 @@ mod test {
             FeedbackRecord {
                 news_item: NewsItem::default(Some(4.0)),
                 title_embedding: vec![1.0, 2.0, 3.0],
-                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+                bow_embedding: vec![4.0, 5.0, 6.0],
             },
             FeedbackRecord {
                 news_item: NewsItem::default(Some(4.0)),
                 title_embedding: vec![7.0, 8.0, 9.0],
-                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+                bow_embedding: vec![10.0, 11.0, 12.0],
             },
         ];
 
@@ -598,12 +598,12 @@ mod test {
             FeedbackRecord {
                 news_item: NewsItem::default(Some(4.0)),
                 title_embedding: vec![1.0, 2.0, 3.0],
-                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+                bow_embedding: vec![4.0, 5.0, 6.0],
             },
             FeedbackRecord {
                 news_item: NewsItem::default(Some(5.0)),
                 title_embedding: vec![7.0, 8.0, 9.0],
-                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+                bow_embedding: vec![10.0, 11.0, 12.0],
             },
         ];
 
@@ -624,12 +624,12 @@ mod test {
             FeedbackRecord {
                 news_item: NewsItem::default(Some(1.0)),
                 title_embedding: vec![1.0, 2.0, 3.0],
-                keywords_and_categories_embedding: vec![4.0, 5.0, 6.0],
+                bow_embedding: vec![4.0, 5.0, 6.0],
             },
             FeedbackRecord {
                 news_item: NewsItem::default(Some(4.0)),
                 title_embedding: vec![7.0, 8.0, 9.0],
-                keywords_and_categories_embedding: vec![10.0, 11.0, 12.0],
+                bow_embedding: vec![10.0, 11.0, 12.0],
             },
         ];
 

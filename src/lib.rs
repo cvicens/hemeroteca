@@ -13,6 +13,7 @@ pub mod prelude {
     pub use crate::common::Operator;
     pub use crate::common::PipelineError;
     pub use crate::common::FeedbackRecord;
+    pub use crate::calculate_relevance_by_similarity_to_feedback_records;
     pub use crate::clean_content;
     pub use crate::fetch_news_items_opted_in;
     pub use crate::fill_news_item_content;
@@ -30,16 +31,15 @@ pub mod prelude {
     pub use crate::top_k_news_items;
     pub use crate::update_news_items_with_relevance;
     pub use crate::update_news_items_with_relevance_top_k;
-    pub use crate::openai::summarize;
-    pub use crate::relevance::calculate_relevance;
-    pub use crate::embeddings::{build_model_and_tokenizer, generate_embedding, generate_embeddings, DEFAULT_MODEL_ID, DEFAULT_REVISION};
     pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv, read_feedback_records_from_parquet};
+    pub use crate::embeddings::{DEFAULT_MODEL_ID, DEFAULT_REVISION};
     
 }
 
 use crate::relevance::calculate_relevance;
+use candle_core::Tensor;
 use common::{ChannelType, FeedbackRecord, NewsItem, Operator, PipelineError};
-use embeddings::{build_model_and_tokenizer, generate_embeddings};
+use embeddings::{build_model_and_tokenizer, cosine_similarity, generate_embeddings, generate_embeddings_for_sentences};
 
 use std::{
     error::Error,
@@ -414,19 +414,6 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
         news_item.error = Some(PipelineError::NetworkError(error));
     }
 }
-
-// /// Function that returns the top k news items from the database
-// pub async fn top_k_news_items(top_k: u8, news_items: &Vec<NewsItem>) ->
-// Vec<NewsItem> {     // The top k news items are the ones with the highest
-// relevance     let mut news_items = news_items.clone();
-//     news_items.sort_by(|a, b| {
-//         let relevance_a = calculate_relevance(a);
-//         let relevance_b = calculate_relevance(b);
-//         relevance_b.cmp(&relevance_a)
-//     });
-
-//     news_items.into_iter().take(top_k as usize).collect()
-// }
 
 /// Function that returns the top k news items based on their relevance
 pub async fn top_k_news_items(top_k: u8, news_items:&[NewsItem]) -> Vec<NewsItem> {
@@ -864,8 +851,8 @@ pub async fn generate_feedback_records(
         let handle: tokio::task::JoinHandle<Result<FeedbackRecord, anyhow::Error>> = tokio::spawn(async move {
             let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
             // Concatenate keywords and categories separated by spaces
-            let keywords_and_categories = join_keywords_and_categories(&item);
-            let sentences = vec![item.title.as_str(), keywords_and_categories.as_str()];
+            let bow = item.get_bow();
+            let sentences = vec![item.title.as_str(), bow.as_str()];
             let embeddings = generate_embeddings(tokenizer, model, &sentences, normalize_embedding).await?;
             
             // Check that the embeddings have the correct dimensions
@@ -875,13 +862,13 @@ pub async fn generate_feedback_records(
             let title_embedding: Vec<f32>  = embeddings.narrow(0, 0, 1)?.to_vec2()?[0].clone();
             log::trace!("title_embedding: {:?}", title_embedding);
             
-            let keywords_and_categories_embedding: Vec<f32>  = embeddings.narrow(0, 1, 1)?.to_vec2()?[0].clone();
-            log::trace!("keywords_and_categories_embedding: {:?}", keywords_and_categories_embedding);
+            let bow_embedding: Vec<f32>  = embeddings.narrow(0, 1, 1)?.to_vec2()?[0].clone();
+            log::trace!("bow_embedding: {:?}", bow_embedding);
             
             Ok(FeedbackRecord {
                 news_item: item,
                 title_embedding: title_embedding,
-                keywords_and_categories_embedding: keywords_and_categories_embedding,
+                bow_embedding,
             })
         });
         handles.push(handle);
@@ -899,23 +886,113 @@ pub async fn generate_feedback_records(
 
 }
 
-/// Function that joins keywords and categories of a NewsItem into a Vec<String> 
-/// then joins all the strings into a single string separated by spaces
-fn join_keywords_and_categories(item: &NewsItem) -> String {
-    let mut keywords_and_categories = Vec::new();
-    if let Some(keywords) = &item.keywords {
-        keywords_and_categories.push(keywords.clone());
-    }
-    if let Some(categories) = &item.categories {
-        keywords_and_categories.push(categories.clone());
-    }
-    keywords_and_categories.join(" ")
+/// Function that calculates the relevance of a NewsItem by similarity given a slice of FeedbackRecords
+pub async fn calculate_relevance_by_similarity_to_feedback_records(
+    news_item: &NewsItem, 
+    feedback_records: &[FeedbackRecord],
+    model_id: &str,
+    revision: &str,
+    gpu: bool,
+    use_pth: bool,
+    approximate_gelu: bool,
+    normalize_embedding: bool
+    ) -> anyhow::Result<f64> {
+    // Start time
+    let start = std::time::Instant::now();
+
+    // Calculate embedding for the title of the news item
+    let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
+    let embeddings = generate_embeddings_for_sentences(tokenizer, model, &[&news_item.title, &news_item.get_bow()], normalize_embedding).await?;
+
+    // Calculate relevance with regards to the join of keywords and categories
+    let title_relevance = calculate_relevance_by_cosine_similarity(
+        &embeddings[0],
+        feedback_records,
+        |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
+    let bow_relevance = calculate_relevance_by_cosine_similarity(
+        &embeddings[1], 
+        feedback_records,
+        |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
+
+    let elapsed_time = start.elapsed().as_secs_f64();
+    log::info!("Relevance calculated in {} secs", elapsed_time);
+    
+    // Return the maximum relevance
+    Ok(title_relevance.max(bow_relevance))
 }
 
+/// Function that calculates the relevance of a NewsItem by similarity to a slice of FeedbackRecords
+async fn calculate_relevance_by_cosine_similarity(
+    embedding: &Tensor, 
+    feedback_records: &[FeedbackRecord], 
+    extractor: fn(FeedbackRecord) -> (Vec<f32>, f64)) -> anyhow::Result<f64> {
+    // Iterate over the feedback records, spawn a tokio task for each record to calculate the cosine similarity
+    let mut tasks = Vec::new();
+    for feedback_record in feedback_records {
+        let record_embedding_with_relevance = extractor(feedback_record.clone());
+        let task: tokio::task::JoinHandle<Result<(f32, f64), _>> = tokio::spawn({
+            let embedding = embedding.clone();
+            let record_embedding_with_relevance = record_embedding_with_relevance.clone();  // Move the data needed
+            // Check that the embeddings have the correct dimensions
+            let embedding_length = embedding.dims()[1];
+            let record_embedding_length = record_embedding_with_relevance.0.len();
+            assert!(embedding_length == record_embedding_length);
+            async move {
+                let device = embedding.device();
+                let record_embedding = Tensor::new(&record_embedding_with_relevance.0[..], &device)?.reshape(&[1, record_embedding_length])?;
+                let relevance = record_embedding_with_relevance.1;
+                let similarity = cosine_similarity::<f32>(&embedding, &record_embedding).await?;
+                Ok::<(f32, f64), anyhow::Error>((similarity, relevance))
+            }
+        });
+        tasks.push(task);
+    }
+
+    // Wait for all the tasks to finish
+    let mut results = Vec::new();
+    for task in tasks {
+        results.push(task.await?);
+    }
+
+    let threshold = 0.75;
+
+    // Filter out tuples which similarity value is below threshold
+    let mut similarities: Vec<(f32, f64)> = results.into_iter()  // Turn the original vector into an iterator
+    .filter_map(|item: Result<(f32, f64), _>| {
+        if let Ok((similarity, relevance)) = item {
+            if similarity > threshold {
+                return Some((similarity, relevance));  // Keep this item
+            }
+        }
+        None  // Discard the item
+    })
+    .collect();
+
+    // Order the similarities by similarity
+    similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+
+    // If there are no similarities return 0
+    if similarities.is_empty() {
+        Ok(0.0)
+    } else {
+        // Calculate the average of the relevances
+        let relevances: Vec<f64> = similarities.iter().map(|(_, relevance)| *relevance).collect();
+        let avg_relevance = relevances.iter().sum::<f64>() / relevances.len() as f64;
+        if avg_relevance.is_nan() || avg_relevance.is_infinite() || avg_relevance < 0.0 {
+            Ok(0.0)
+        } else {
+            Ok(avg_relevance)
+        }
+    }
+
+    
+    
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embeddings::{DEFAULT_MODEL_ID, DEFAULT_REVISION};
     // use regex::Regex;
     use rss::extension::{ExtensionBuilder, ExtensionMap};
     use rss::CategoryBuilder;
@@ -1145,4 +1222,76 @@ mod tests {
             "# Welcome to Example Page\n\nThis is a paragraph with **bold** text.\n\nThis is a paragraph with *italic* text.\n\nThis is a paragraph with *italic* text and an emoji 😊.\n\nPárrafo con caracteres especiales como: ñéåîü€@.\n\n* Item one\n* Item two\n* Item three\n"
         );
     }
+
+    // Test calculate_relevance_by_similarity_to_feedback_records with a couple of feedback records
+    #[tokio::test]
+    async fn test_calculate_relevance_by_similarity_to_feedback_records() -> anyhow::Result<()> {
+        // Create a couple of feedback records
+        let feedback_record_1 = FeedbackRecord {
+            news_item: NewsItem {
+                error: None,
+                creators: "Creator".to_string(),
+                categories: Some("Politics".to_string()),
+                keywords: Some("Elections".to_string()),
+                title: "President Elections".to_string(),
+                description: "Description".to_string(),
+                clean_content: None,
+                channel: "Channel".to_string(),
+                link: "http://example.com".to_string(),
+                pub_date: None,
+                relevance: Some(0.5),
+            },
+            title_embedding: vec![0.1; 384],
+            bow_embedding: vec![0.5; 384],
+        };
+        let feedback_record_2 = FeedbackRecord {
+            news_item: NewsItem {
+                error: None,
+                creators: "Creator".to_string(),
+                categories: Some("IA".to_string()),
+                keywords: Some("Inteligencia Artificial".to_string()),
+                title: "New LLM model released".to_string(),
+                description: "".to_string(),
+                clean_content: None,
+                channel: "Channel".to_string(),
+                link: "http://example.com".to_string(),
+                pub_date: None,
+                relevance: Some(0.7),
+            },
+            title_embedding: vec![0.1; 384],
+            bow_embedding: vec![0.5; 384],
+        };
+        let feedback_records = vec![feedback_record_1, feedback_record_2];
+
+        // Create a test NewsItem
+        let news_item = NewsItem {
+            error: None,
+            creators: "Creator".to_string(),
+            categories: Some("Politics".to_string()),
+            keywords: Some("Elections".to_string()),
+            title: "President Elections".to_string(),
+            description: "Description".to_string(),
+            clean_content: None,
+            channel: "Channel".to_string(),
+            link: "http://example.com".to_string(),
+            pub_date: None,
+            relevance: None,
+        };
+
+        // Calculate the relevance of the NewsItem
+        let relevance = calculate_relevance_by_similarity_to_feedback_records(
+            &news_item,
+            &feedback_records,
+            DEFAULT_MODEL_ID,
+            DEFAULT_REVISION,
+            false,
+            false,
+            false,
+            false,
+        ).await?;
+
+        assert_eq!(relevance, 0.0);
+        Ok(())
+    }
+
 }

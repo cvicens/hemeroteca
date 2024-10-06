@@ -1,5 +1,5 @@
 /// Common types and utilities used across the library
-use std::{cmp::Ordering, error::Error, str::FromStr};
+use std::{cmp::Ordering, collections::HashSet, error::Error, str::FromStr};
 
 /// Constants
 pub const DEFAULT_CONFIG_FOLDER_NAME: &str = ".hemeroteca";
@@ -193,6 +193,25 @@ impl NewsItem {
             (None, None) => Ordering::Equal,
         }
     }
+
+    /// Function that returns the Bag of Words (BOW) for the NewsItem
+    pub fn get_bow(&self) -> String {
+        let mut bow = HashSet::new();
+
+        // Helper function to process and add words to the BOW
+        let mut add_to_bow = |text: &Option<String>| {
+            if let Some(items) = text {
+                bow.insert(items.to_lowercase());  // Convert to lowercase for normalization
+            }
+        };
+
+        // Add keywords and categories to the BOW
+        add_to_bow(&self.keywords);
+        add_to_bow(&self.categories);
+
+        // Convert the HashSet to a space-separated string
+        bow.into_iter().collect::<Vec<_>>().join(" ")
+    }
 }
 
 /// Struct that represents a Feedback Record
@@ -200,6 +219,6 @@ impl NewsItem {
 pub struct FeedbackRecord {
     pub news_item: NewsItem,
     pub title_embedding: Vec<f32>,
-    pub keywords_and_categories_embedding: Vec<f32>,
+    pub bow_embedding: Vec<f32>,
 }
 

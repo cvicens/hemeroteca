@@ -51,29 +51,29 @@ pub enum PipelineError {
 
 // Return a str representation of the PipelineError
 impl FromStr for PipelineError {
-    type Err = Box<dyn Error>;
+    type Err = anyhow::Error;
 
     /// Function that returns PipelineError from a &str
-    fn from_str(error: &str) -> Result<Self, Self::Err> {
+    fn from_str(error: &str) -> anyhow::Result<Self> {
         // Match error by using a regex pattern:
         // - ParsingError(.*) => ParsingError
         // - NetworkError(.*) => NetworkError
         // - EmptyString
         // - NoContent
         let re = regex::Regex::new(r"^(ParsingError\((.*)\)|NetworkError\((.*)\)|EmptyString|NoContent)$")?;
-        let caps = re.captures(error).ok_or("No match")?;
+        let caps = re.captures(error).ok_or_else(|| anyhow::anyhow!("No match"))?;
         match caps.get(1).map(|m| m.as_str()) {
             Some("EmptyString") => Ok(PipelineError::EmptyString),
             Some("NoContent") => Ok(PipelineError::NoContent),
             Some("ParsingError") => {
-                let msg = caps.get(2).ok_or("No match")?.as_str().to_string();
+                let msg = caps.get(2).ok_or_else(|| anyhow::anyhow!("No match"))?.as_str().to_string();
                 Ok(PipelineError::ParsingError(msg))
             }
             Some("NetworkError") => {
-                let msg = caps.get(3).ok_or("No match")?.as_str().to_string();
+                let msg = caps.get(3).ok_or_else(|| anyhow::anyhow!("No match"))?.as_str().to_string();
                 Ok(PipelineError::NetworkError(msg))
             }
-            _ => Err("No match".into()),
+            _ => Err(anyhow::anyhow!("No match")),
         }
     }
 }
@@ -113,10 +113,10 @@ impl NewsItem {
     /// let news_item = NewsItem::from_item("Other", &item);
     /// assert_eq!(news_item.is_err(), true);
     /// ```
-    pub fn from_item(channel: &str, item: &rss::Item) -> Result<NewsItem, Box<dyn Error>> {
-        let title = item.title().ok_or("No title")?.to_string();
-        let link = item.link().ok_or("No link")?.to_string();
-        let description = item.description().ok_or("No description")?.to_string();
+    pub fn from_item(channel: &str, item: &rss::Item) -> anyhow::Result<NewsItem> {
+        let title = item.title().ok_or_else(|| anyhow::anyhow!("No title"))?.to_string();
+        let link = item.link().ok_or_else(|| anyhow::anyhow!("No link"))?.to_string();
+        let description = item.description().ok_or_else(|| anyhow::anyhow!("No description"))?.to_string();
         let pub_date = item.pub_date().map(|date| date.to_string().replace("GMT", "+0000"));
         let categories = item
             .categories()

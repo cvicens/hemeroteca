@@ -250,7 +250,7 @@ pub fn concat_batches(schema: &SchemaRef, batches: &[RecordBatch]) -> arrow::err
 
 // Function to convert FeedbackRecords to Arrow arrays and write them as Parquet
 // TODO: manage f64 and f32
-pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn write_feedback_records_parquet(records: &Vec<FeedbackRecord>, file: &str) -> anyhow::Result<()> {
     // Extract relevant fields from FeedbackRecords
     let mut channels = vec![];
     let mut titles = vec![];

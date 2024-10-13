@@ -42,10 +42,7 @@ use candle_core::Tensor;
 use common::{ChannelType, FeedbackRecord, NewsItem, Operator, PipelineError};
 use embeddings::{build_model_and_tokenizer, cosine_similarity, generate_embeddings, generate_embeddings_for_sentences};
 
-use std::{
-    error::Error,
-    io::{BufRead, Cursor, Write},
-};
+use std::io::{BufRead, Cursor, Write};
 
 use select::predicate::Name;
 use select::{document::Document, node};
@@ -56,7 +53,7 @@ use regex::Regex;
 use rss::{Channel, Item};
 
 /// Function that reads a feed from a URL
-pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
+pub async fn read_feed(feed_url: &str) -> anyhow::Result<Channel> {
     let content = reqwest::get(feed_url).await?.bytes().await?;
     let channel = Channel::read_from(&content[..])?;
     Ok(channel)
@@ -72,7 +69,7 @@ pub async fn read_feed(feed_url: &str) -> Result<Channel, Box<dyn Error>> {
 /// let count_ok = urls.len() >= 0;
 /// assert_eq!(count_ok, true);
 /// ```
-pub fn read_urls(file: &str) -> Result<Vec<String>, Box<dyn Error>> {
+pub fn read_urls(file: &str) -> anyhow::Result<Vec<String>> {
     let file = std::fs::File::open(file)?;
     let reader = std::io::BufReader::new(file);
 
@@ -545,7 +542,7 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
 }
 
 /// Function that writes a relevance report to a file and returns a Result
-pub async fn log_relevance_report_to_file(report: &str, file: &str) -> Result<(), Box<dyn Error>> {
+pub async fn log_relevance_report_to_file(report: &str, file: &str) -> anyhow::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -571,7 +568,7 @@ fn generate_anchor(title: &str) -> String {
 }
 
 /// Function that writes a report (&str) to a file and returns a Result
-pub async fn log_report_to_file(report: &str, file: &str) -> Result<(), Box<dyn Error>> {
+pub async fn log_report_to_file(report: &str, file: &str) -> anyhow::Result<()> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1049,7 +1046,7 @@ mod tests {
     use std::{collections::BTreeMap, io::Write};
 
     ///! Function that reads a feed from a file
-    fn read_feed_from_file(file: &str) -> Result<Channel, Box<dyn Error>> {
+    fn read_feed_from_file(file: &str) -> anyhow::Result<Channel> {
         let file = std::fs::File::open(file)?;
         let reader = std::io::BufReader::new(file);
         let channel = Channel::read_from(reader)?;

@@ -476,6 +476,10 @@ fn create_fixed_size_list_array_of_floats(embeddings_flattened: &[f32], list_siz
 /// # }
 /// ```
 pub async fn read_feedback_records_from_parquet(file: &str) -> anyhow::Result<Vec<FeedbackRecord>> {
+    // If file does not exist, return an error
+    if !Path::new(file).exists() {
+        return Err(anyhow::anyhow!("File does not exist."));
+    }
     // Open the file
     let file = File::open(file)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;

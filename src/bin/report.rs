@@ -27,8 +27,12 @@ impl OptInOperator {
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// File with the feeds to read
-    #[arg(short, long, default_value = "feeds.txt")]
+    #[arg(long, default_value = "feeds.txt")]
     feeds_file: String,
+
+    /// FeedbackRecords are saved to this file
+    #[arg(long, default_value = "feedback.parquet")]
+    feedback_file: String,
 
     /// Threads used to parse the feeds
     #[arg(short, long)]
@@ -51,6 +55,34 @@ struct Args {
     command: Option<Commands>,
 }
 
+#[derive(Parser, Debug)]
+struct ModelArgs {
+    /// Model id
+    #[arg(long, default_value = "sentence-transformers/all-MiniLM-L6-v2")]
+    model_id: String,
+
+    /// Model revision
+    /// The revision of the model to use
+    #[arg(long, default_value = "refs/pr/21")]
+    model_revision: String,
+
+    /// Run on CPU rather than on GPU.
+    #[arg(long, default_value = "false")]
+    gpu: bool,
+
+    /// Use PyTorch model
+    #[arg(long, default_value = "false")]
+    use_pth: bool,
+
+    /// Normalize embeddings
+    #[arg(long, default_value = "false")]
+    normalize_embedding: bool,
+
+    /// Approximate GELU
+    #[arg(long, default_value = "false")]
+    approximate_gelu: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// It generates a dossier
@@ -66,6 +98,14 @@ enum Commands {
         /// Log to database
         #[arg(short, long)]
         db: bool,
+
+        /// Threshold for cosine similarity calculation
+        #[arg(long, default_value = "0.95")]
+        similarity_threshold: f32,
+
+        /// Common model arguments
+        #[command(flatten)]
+        model_args: ModelArgs,
     },
 
     // Relevance
@@ -73,6 +113,14 @@ enum Commands {
         /// Report name
         #[arg(short, long, default_value = "report")]
         report_name: String,
+
+        /// Threshold for cosine similarity calculation
+        #[arg(long, default_value = "0.95")]
+        similarity_threshold: f32,
+
+        /// Common model arguments
+        #[command(flatten)]
+        model_args: ModelArgs,
     },
 
      // Feedback
@@ -85,30 +133,9 @@ enum Commands {
         #[arg(short, long, default_value = "20")]
         number: String,
 
-        /// Model id
-        #[arg(long, default_value = "sentence-transformers/all-MiniLM-L6-v2")]
-        model_id: String,
-
-        /// Model revision
-        /// The revision of the model to use
-        #[arg(long, default_value = "refs/pr/21")]
-        model_revision: String,
-
-        /// Run on CPU rather than on GPU.
-        #[arg(long, default_value = "false")]
-        gpu: bool,
-
-        /// Use PyTorch model
-        #[arg(long, default_value = "false")]
-        use_pth: bool,
-
-        /// Normalize embeddings
-        #[arg(long, default_value = "false")]
-        normalize_embedding: bool,
-
-        /// Approximate GELU
-        #[arg(long, default_value = "false")]
-        approximate_gelu: bool,
+        /// Common model arguments
+        #[command(flatten)]
+        model_args: ModelArgs,
     },
 }
 
@@ -134,6 +161,9 @@ fn main() {
 
     // Get the feed urls file name
     let feeds_file = args.feeds_file;
+
+    // Get the feedback file name
+    let feedback_file = args.feedback_file;
 
     // If the number of threads is not provided, use the number of cores
     let max_threads = args.threads.unwrap_or(num_cpus::get() as usize);
@@ -180,32 +210,30 @@ fn main() {
     
     // Match the command
     match args.command {
-        Some(Commands::Dossier {report_name, log, db}) => {
+        Some(Commands::Dossier {report_name, log, db, similarity_threshold, model_args }) => {
             log::info!("Generating dossier with the report name: {}", report_name);
             rt.block_on( async {
-                generate_dossier_command(&root_folder, &feed_urls, &report_name, opt_in, operator.as_wrapper(), log, db).await;
+                generate_dossier_command(&root_folder, &feed_urls, &report_name, opt_in, operator.as_wrapper(), &feedback_file, log, db, similarity_threshold, &model_args).await;
             });
             let end: std::time::Duration = start.elapsed();
             log::info!("Time elapsed: {:?}", end);
         }
-        Some(Commands::Relevance {report_name}) => {
+        Some(Commands::Relevance {report_name, similarity_threshold, model_args}) => {
             log::info!("Generating relevance with the report name: {}", report_name);
             rt.block_on( async {
-                generate_relevance_command(&root_folder, &feed_urls, &report_name).await;
+                generate_relevance_command(&root_folder, &feed_urls, &report_name, opt_in, operator.as_wrapper(), &feedback_file, similarity_threshold, &model_args).await;
             });
             let end: std::time::Duration = start.elapsed();
             log::info!("Time elapsed: {:?}", end);
         }
         Some(Commands::Feedback {
-                file_name, number,
-                model_id, model_revision, 
-                gpu, use_pth, normalize_embedding, approximate_gelu}) => {
+                file_name, number, model_args}) => {
             let number = usize::from_str_radix(&number, 10);
             // If the number could be parsed
             if let Ok(number) = number {
                 log::info!("Requesting feedback for {} items", number);
                 rt.block_on( async {
-                    request_feedback_command(&root_folder, &feed_urls, number, &file_name, gpu, &model_id, &model_revision, use_pth, normalize_embedding, approximate_gelu).await;
+                    request_feedback_command(&root_folder, &feed_urls, number, &file_name, &model_args).await;
                 });
                 let end: std::time::Duration = start.elapsed();
                 log::info!("Time elapsed: {:?}", end);
@@ -228,7 +256,7 @@ fn main() {
 /// - file_name: String - The name of the file to save the feedback as CSV
 async fn request_feedback_command(
     root_folder: &str, feed_urls: &[String], number: usize, file_name: &str, 
-    gpu: bool, model_id: &str, model_revision: &str, use_pth: bool, normalize_embedding: bool, approximate_gelu: bool) {
+    model_args: &ModelArgs) {
     // Vector to store the items read from the feeds
     let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
 
@@ -264,7 +292,7 @@ async fn request_feedback_command(
             log::info!("Feedback items: {:?}", feedback_news_items.len());
 
             // Generate feedback records
-            let feedback_records = generate_feedback_records(&feedback_news_items, model_id, model_revision, gpu, use_pth, normalize_embedding, approximate_gelu).await;
+            let feedback_records = generate_feedback_records(&feedback_news_items, &model_args.model_id, &model_args.model_revision, model_args.gpu, model_args.use_pth, model_args.normalize_embedding, model_args.approximate_gelu).await;
 
             // If the result is ok
             if let Ok(feedback_records) = feedback_records {
@@ -368,41 +396,60 @@ fn request_relevance_feedback(item: &NewsItem, count: usize, number: usize) -> O
 /// - root_folder: &String - The root folder for the reports
 /// - feed_urls: Vec<String> - The feed urls to read
 /// - report_name: String - The name of the report
-async fn generate_relevance_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String) {
+async fn generate_relevance_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, feedback_file: &String, similarity_threshold: f32, model_args: &ModelArgs) {
     // Vector to store the items read from the feeds
-    let items = fetch_news_items_opted_in(feed_urls, &vec![], Operator::OR).await;
+    let news_items = fetch_news_items_opted_in(feed_urls, &opt_in, operator).await;
 
     // Get the current date in the format YYYY-MM-DD-HH-MM-SS
     let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
 
     // if we could read the items from the feeds
-    if let Some(mut items) = items {
+    if let Some(mut items) = news_items {
         log::info!("Items read from the feeds: {:?}", items.len());
 
-        // Update all the items with the calculated relevance
-        let updated_items = update_news_items_with_relevance(&mut items).await.expect("Should not happen");
+        // Read FeedbackRecords from a Parquet file
+        let result = read_feedback_records_from_parquet(&feedback_file).await;
 
-        // Create the report folder name
-        let report_folder = format!("{}_{}", report_name, current_date);
+        // If the result is ok, get the feedback records
+        if let Ok(feedback_records) = result {
+            log::debug!("Reading feedback records from the file: {}", feedback_file);
+            log::debug!("Feedback records: {:?}", feedback_records.len());
 
-        // Define the folder path
-        let folder_path = Path::new(&root_folder).join(&report_folder);
+            // Update all the items with the calculated relevance
+            // let updated_items = update_news_items_with_relevance(&mut items).await.expect("Should not happen");
+            let result = update_relevance_of_news_items(&mut items, &feedback_records, similarity_threshold, &model_args.model_id, &model_args.model_revision, model_args.gpu, model_args.use_pth, model_args.normalize_embedding, model_args.approximate_gelu).await;
 
-        // Create the report folder
-        std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
+            // If the result of updating the relevance is ok
+            if result.is_ok() {
+                log::info!("Items updated with relevance: {:?}", items.len());
 
-        // Create the report file name
-        let report_file = folder_path.join(format!("relevance-{}_{}.md", report_name, current_date));
+                // Create the report folder name
+                let report_folder = format!("{}_{}", report_name, current_date);
 
-        // Logging to file
-        log::info!("Logging to the report log file: {}", report_file.to_str().unwrap());
+                // Define the folder path
+                let folder_path = Path::new(&root_folder).join(&report_folder);
 
-        // Generate the relevance report
-        let relevance_report = generate_relevance_report(&updated_items);
+                // Create the report folder
+                std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
 
-        // Log relevance report to output file
-        if let Err(err) = log_report_to_file(&relevance_report, report_file.to_str().unwrap()).await {
-            log::error!("Failed to log relevance report to file: {}", err);
+                // Create the report file name
+                let report_file = folder_path.join(format!("relevance-{}_{}.md", report_name, current_date));
+
+                // Logging to file
+                log::info!("Logging to the report log file: {}", report_file.to_str().unwrap());
+
+                // Generate the relevance report
+                let relevance_report = generate_relevance_report(&items);
+
+                // Log relevance report to output file
+                if let Err(err) = log_report_to_file(&relevance_report, report_file.to_str().unwrap()).await {
+                    log::error!("Failed to log relevance report to file: {}", err);
+                }
+            } else {
+                log::error!("Failed to update the relevance of the news items! Exiting...");
+            }
+        } else {
+            log::error!("Failed to read feedback records from the file: {}. Use `feedback` command to generate the feedback file.", feedback_file);
         }
     } else {
         log::error!("No news items found! Exiting...");
@@ -417,86 +464,116 @@ async fn generate_relevance_command(root_folder: &String, feed_urls: &Vec<String
 /// - operator: Operator - The operator to use for filtering
 /// - log: bool - Whether to log to file
 /// - db: bool - Whether to log to database
-async fn generate_dossier_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, log: bool, db: bool) {
+async fn generate_dossier_command(root_folder: &String, feed_urls: &Vec<String>, report_name: &String, opt_in: Vec<String>, operator: Operator, feedback_file: &String, log: bool, db: bool, similarity_threshold: f32, model_args: &ModelArgs) {
     // Vector to store the items read from the feeds
-    let items = fetch_news_items_opted_in(feed_urls, &opt_in, operator).await;
+    let news_items = fetch_news_items_opted_in(feed_urls, &opt_in, operator).await;
 
     // if we could read the items from the feeds
-    if let Some(mut items) = items {
+    if let Some(mut items) = news_items {
         log::info!("Items read from the feeds: {:?}", items.len());
 
-        // Update all the items with the calculated relevance and return the top k items
-        let mut top_k_items = update_news_items_with_relevance_top_k(&mut items, 100).await;
+        // Read FeedbackRecords from a Parquet file
+        let result = read_feedback_records_from_parquet(&feedback_file).await;
 
-        // Fill the news items with clean contents
-        let clean_news_items = fill_news_items_with_clean_contents(&mut top_k_items).await;
+        // If the result is ok, get the feedback records
+        if let Ok(feedback_records) = result {
+            log::debug!("Reading feedback records from the file: {}", feedback_file);
+            log::debug!("Feedback records: {:?}", feedback_records.len());
 
-        // Write intermediate results to the file
-        if let Some(mut clean_news_items) = clean_news_items {
-            log::info!("Clean news items: {:?}", clean_news_items.len());
+            // Update all the items with the calculated relevance
+            // let updated_items = update_news_items_with_relevance(&mut items).await.expect("Should not happen");
+            let result = update_relevance_of_news_items(&mut items, &feedback_records, similarity_threshold, &model_args.model_id, &model_args.model_revision, model_args.gpu, model_args.use_pth, model_args.normalize_embedding, model_args.approximate_gelu).await;
 
-            // Get the current date in the format YYYY-MM-DD-HH-MM-SS
-            let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
+            // If the result of updating the relevance is ok
+            if result.is_ok() {
+                log::info!("Items updated with relevance: {:?}", items.len());
 
-            // Create the report folder name
-            let report_folder = format!("{}_{}", report_name, current_date);
+                // Sort items by relevance and take the top k items
+                let mut top_k_items = sort_news_items_by_relevance(&mut items, 100);
 
-            // Define the folder path
-            let folder_path = Path::new(&root_folder).join(&report_folder);
+                // Fill the news items with clean contents
+                let clean_news_items = fill_news_items_with_clean_contents(&mut top_k_items).await;
 
-            // Create the report folder
-            std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
+                // Write intermediate results to the file
+                if let Some(clean_news_items) = clean_news_items {
+                    log::info!("Clean news items: {:?}", clean_news_items.len());
+                    // Sort items by relevance and take the top k items
+                    let top_k_items = sort_news_items_by_relevance(&clean_news_items, 20);
 
-            // If log is true, log to file
-            if log {
-                // Create the log file name
-                let report_log_file = folder_path.join(format!("{}_{}.md", report_name, current_date));
+                    // Get the current date in the format YYYY-MM-DD-HH-MM-SS
+                    let current_date = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S").to_string();
 
-                // Logging to file
-                log::info!("Logging to the report log file: {}", report_log_file.to_str().unwrap());
+                    // Create the report folder name
+                    let report_folder = format!("{}_{}", report_name, current_date);
 
-                // Log clean news items to output file
-                log_news_items_to_file(&clean_news_items, report_log_file.to_str().unwrap());
+                    // Define the folder path
+                    let folder_path = Path::new(&root_folder).join(&report_folder);
+
+                    // Create the report folder
+                    std::fs::create_dir_all(&folder_path).expect("Could not create the report folder!");
+
+                    // If log is true, log to file
+                    if log {
+                        // Create the log file name
+                        let report_log_file = folder_path.join(format!("{}_{}.md", report_name, current_date));
+
+                        // Logging to file
+                        log::info!("Logging to the report log file: {}", report_log_file.to_str().unwrap());
+
+                        // Log clean news items to output file
+                        log_news_items_to_file(&clean_news_items, report_log_file.to_str().unwrap());
+                    }
+
+                    // If db is true, log to database
+                    if db {
+                        // Create the report db file name
+                        let report_db_file = folder_path.join(format!("{}_{}.db", report_name, current_date));
+                        
+                        // Logging to database
+                        log::info!("Logging to the report log database: {}", report_db_file.to_str().unwrap());
+
+                        // Insert the news items into the database
+                        let unique_inserted_items = log_news_items_to_db(&clean_news_items, report_db_file.to_str().unwrap()).await;
+                        log::info!("Unique inserted items: {:?}", unique_inserted_items);
+                    }
+
+                    // // Now that the contents are present and clean pdate again all the items with the calculated relevance 
+                    // // and return the top k items
+                    // let top_k_items = update_news_items_with_relevance_top_k(&mut clean_news_items, 20).await;
+
+                    
+                    // Create the dossier file name
+                    let report_file = folder_path.join(format!("dossier-{}_{}.md", report_name, current_date));
+
+                    // Generating dossier
+                    log::info!("Generating dossier: {}", report_file.to_str().unwrap());
+
+                    // Generate the dossier report
+                    let report = generate_dossier_report(&top_k_items);
+
+                    // Log report to output file
+                    if let Err(err) = log_report_to_file(&report, report_file.to_str().unwrap()).await {
+                        log::error!("Failed to log relevance report to file: {}", err);
+                    }
+                } else {
+                    log::error!("No news items survived the cleaning phase! Exiting...");
+                }
+            } else {
+                log::error!("Failed to update the relevance of the news items! Exiting...");
             }
-
-            // If db is true, log to database
-            if db {
-                // Create the report db file name
-                let report_db_file = folder_path.join(format!("{}_{}.db", report_name, current_date));
-                
-                // Logging to database
-                log::info!("Logging to the report log database: {}", report_db_file.to_str().unwrap());
-
-                // Insert the news items into the database
-                let unique_inserted_items = log_news_items_to_db(&clean_news_items, report_db_file.to_str().unwrap()).await;
-                log::info!("Unique inserted items: {:?}", unique_inserted_items);
-            }
-
-            // Now that the contents are present and clean pdate again all the items with the calculated relevance 
-            // and return the top k items
-            let top_k_items = update_news_items_with_relevance_top_k(&mut clean_news_items, 20).await;
-
-            
-            // Create the dossier file name
-            let report_file = folder_path.join(format!("dossier-{}_{}.md", report_name, current_date));
-
-            // Generating dossier
-            log::info!("Generating dossier: {}", report_file.to_str().unwrap());
-
-            // // Generate the dossier with the top k items
-            // generate_dossier(&top_k_items, report_file.to_str().unwrap());
-
-            // Generate the dossier report
-            let report = generate_dossier_report(&top_k_items);
-
-            // Log report to output file
-            if let Err(err) = log_report_to_file(&report, report_file.to_str().unwrap()).await {
-                log::error!("Failed to log relevance report to file: {}", err);
-            }
-            
         } else {
-            log::error!("No news items survived the cleaning phase! Exiting...");
+            log::error!("Failed to read feedback records from the file: {}. Use `feedback` command to generate the feedback file.", feedback_file);
         }
     }
+}
+
+/// Function that sorts the news items by relevance and returns the top k items
+fn sort_news_items_by_relevance(items: &[NewsItem], k: usize) -> Vec<NewsItem> {
+    // Sort the items by relevance
+    let mut items = items.to_vec();
+    items.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take the top k items
+    items.into_iter().take(k).collect()
 }
 

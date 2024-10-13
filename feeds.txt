@@ -4,5 +4,3 @@ https://www.20minutos.es/rss/
 https://www.eldiario.es/rss/
 https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml
 https://e00-elmundo.uecdn.es/elmundo/rss/internacional.xml
-https://feeds.a.dj.com/rss/RSSWSJD.xml
-https://feeds.a.dj.com/rss/RSSMarketsMain.xml

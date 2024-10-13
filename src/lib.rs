@@ -13,7 +13,7 @@ pub mod prelude {
     pub use crate::common::Operator;
     pub use crate::common::PipelineError;
     pub use crate::common::FeedbackRecord;
-    pub use crate::calculate_relevance_by_similarity_to_feedback_records;
+    pub use crate::calculate_relevance_of_newsitem;
     pub use crate::clean_content;
     pub use crate::fetch_news_items_opted_in;
     pub use crate::fill_news_item_content;
@@ -31,6 +31,7 @@ pub mod prelude {
     pub use crate::top_k_news_items;
     pub use crate::update_news_items_with_relevance;
     pub use crate::update_news_items_with_relevance_top_k;
+    pub use crate::update_relevance_of_news_items;
     pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv, read_feedback_records_from_parquet};
     pub use crate::embeddings::{DEFAULT_MODEL_ID, DEFAULT_REVISION};
     
@@ -499,7 +500,7 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
 
     // Order the news items by relevance
     let mut news_items = news_items.to_owned();
-    news_items.sort_by(|a, b| a.cmp_relevance(b));
+    news_items.sort_by(|a, b| b.cmp_relevance(a));
 
     // Write table of contents
     report.push_str("# Relevance Report\n");
@@ -886,10 +887,58 @@ pub async fn generate_feedback_records(
 
 }
 
+/// Functon that updates the relevance of a slice of NewsItems given a slice of FeedbackRecords
+pub async fn update_relevance_of_news_items(
+    news_items: &mut [NewsItem], 
+    feedback_records: &[FeedbackRecord],
+    similarity_threshold: f32,
+    model_id: &str,
+    revision: &str,
+    gpu: bool,
+    use_pth: bool,
+    approximate_gelu: bool,
+    normalize_embedding: bool
+    ) -> anyhow::Result<()> {
+    log::info!("Updating relevance of {} news items", news_items.len());
+    log::info!("Using {} of feedback records", feedback_records.len());
+
+    // Spawn a tokio task for each NewsItem to calculate the relevance
+    let mut handles = Vec::new();
+    for news_item in news_items.iter_mut() {
+        // Skip items with errors
+        if news_item.error.is_some() {
+            log::warn!("Skipping item with error: {:?}", news_item.error);
+            continue;
+        }
+        // Clone to move it into the async block
+        let news_item = news_item.clone();
+        let model_id = model_id.to_string();
+        let revision = revision.to_string();
+        let feedback_records = feedback_records.to_vec();
+        // Spawn a blocking task for each item to calculate the relevance
+        let handle: tokio::task::JoinHandle<Result<f64, anyhow::Error>> = tokio::spawn(async move {
+            let relevance = calculate_relevance_of_newsitem(&news_item, &feedback_records, similarity_threshold, &model_id, &revision, gpu, use_pth, approximate_gelu, normalize_embedding).await?;
+            Ok(relevance)
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all the tasks to finish
+    for (i, handle) in handles.into_iter().enumerate() {
+        if let Ok(result) = handle.await {
+            news_items[i].relevance = Some(result?);
+            log::debug!("Relevance of {} is {}", news_items[i].title, news_items[i].relevance.unwrap());
+        }
+    }
+
+    Ok(())
+}
+
 /// Function that calculates the relevance of a NewsItem by similarity given a slice of FeedbackRecords
-pub async fn calculate_relevance_by_similarity_to_feedback_records(
+pub async fn calculate_relevance_of_newsitem(
     news_item: &NewsItem, 
     feedback_records: &[FeedbackRecord],
+    similarity_threshold: f32,
     model_id: &str,
     revision: &str,
     gpu: bool,
@@ -908,14 +957,16 @@ pub async fn calculate_relevance_by_similarity_to_feedback_records(
     let title_relevance = calculate_relevance_by_cosine_similarity(
         &embeddings[0],
         feedback_records,
+        similarity_threshold,
         |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
     let bow_relevance = calculate_relevance_by_cosine_similarity(
         &embeddings[1], 
         feedback_records,
+        similarity_threshold,
         |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
 
     let elapsed_time = start.elapsed().as_secs_f64();
-    log::info!("Relevance calculated in {} secs", elapsed_time);
+    log::debug!("Relevance calculated in {} secs", elapsed_time);
     
     // Return the maximum relevance
     Ok(title_relevance.max(bow_relevance))
@@ -924,7 +975,8 @@ pub async fn calculate_relevance_by_similarity_to_feedback_records(
 /// Function that calculates the relevance of a NewsItem by similarity to a slice of FeedbackRecords
 async fn calculate_relevance_by_cosine_similarity(
     embedding: &Tensor, 
-    feedback_records: &[FeedbackRecord], 
+    feedback_records: &[FeedbackRecord],
+    threshold: f32,
     extractor: fn(FeedbackRecord) -> (Vec<f32>, f64)) -> anyhow::Result<f64> {
     // Iterate over the feedback records, spawn a tokio task for each record to calculate the cosine similarity
     let mut tasks = Vec::new();
@@ -953,8 +1005,6 @@ async fn calculate_relevance_by_cosine_similarity(
     for task in tasks {
         results.push(task.await?);
     }
-
-    let threshold = 0.75;
 
     // Filter out tuples which similarity value is below threshold
     let mut similarities: Vec<(f32, f64)> = results.into_iter()  // Turn the original vector into an iterator
@@ -1226,6 +1276,7 @@ mod tests {
     // Test calculate_relevance_by_similarity_to_feedback_records with a couple of feedback records
     #[tokio::test]
     async fn test_calculate_relevance_by_similarity_to_feedback_records() -> anyhow::Result<()> {
+        let similarity_threshold = 0.95;
         // Create a couple of feedback records
         let feedback_record_1 = FeedbackRecord {
             news_item: NewsItem {
@@ -1279,9 +1330,10 @@ mod tests {
         };
 
         // Calculate the relevance of the NewsItem
-        let relevance = calculate_relevance_by_similarity_to_feedback_records(
+        let relevance = calculate_relevance_of_newsitem(
             &news_item,
             &feedback_records,
+            similarity_threshold,
             DEFAULT_MODEL_ID,
             DEFAULT_REVISION,
             false,

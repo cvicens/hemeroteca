@@ -1,5 +1,5 @@
 /// Common types and utilities used across the library
-use std::{cmp::Ordering, collections::HashSet, error::Error, str::FromStr};
+use std::{cmp::Ordering, collections::HashSet, str::FromStr};
 
 /// Constants
 pub const DEFAULT_CONFIG_FOLDER_NAME: &str = ".hemeroteca";

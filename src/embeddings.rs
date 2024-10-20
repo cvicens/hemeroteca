@@ -15,7 +15,7 @@ pub fn normalize_l2(v: &Tensor) -> anyhow::Result<Tensor> {
 }
 
 pub trait FloatType {
-    fn sqrt(self) -> Self;    
+    fn sqrt(self) -> Self;
 }
 
 impl FloatType for f32 {
@@ -30,13 +30,9 @@ impl FloatType for f64 {
     }
 }
 
-pub fn vec_to_tensor<T: FloatType + WithDType>(v: &Vec<T>, gpu: bool) -> anyhow::Result<Tensor> {
-    let device = if gpu {
-        Device::Cuda(CudaDevice)
-    } else {
-        Device::Cpu
-    };
-    Ok(Tensor::new(&v[..], &device)?)
+pub fn vec_to_tensor<T: FloatType + WithDType>(v: &[T], gpu: bool) -> anyhow::Result<Tensor> {
+    let device = if gpu { Device::Cuda(CudaDevice) } else { Device::Cpu };
+    Ok(Tensor::new(v, &device)?)
 }
 
 pub async fn cosine_similarity<T: FloatType + WithDType>(a: &Tensor, b: &Tensor) -> anyhow::Result<T> {
@@ -46,14 +42,10 @@ pub async fn cosine_similarity<T: FloatType + WithDType>(a: &Tensor, b: &Tensor)
     Ok(sum_ab / (sum_a2 * sum_b2).sqrt())
 }
 
-pub async fn cosine_similarity_vec<T: FloatType + WithDType>(a: &Vec<T>, b: &Vec<T>, gpu: bool) -> anyhow::Result<T> {
-    let device = if gpu {
-        Device::Cuda(CudaDevice)
-    } else {
-        Device::Cpu
-    };
-    let a = Tensor::new(&a[..], &device)?;
-    let b = Tensor::new(&b[..], &device)?;
+pub async fn cosine_similarity_vec<T: FloatType + WithDType>(a: &[T], b: &[T], gpu: bool) -> anyhow::Result<T> {
+    let device = if gpu { Device::Cuda(CudaDevice) } else { Device::Cpu };
+    let a = Tensor::new(a, &device)?;
+    let b = Tensor::new(b, &device)?;
 
     let sum_ab = (&a * &b)?.sum_all()?.to_scalar::<T>()?;
     let sum_a2 = (&a * &a)?.sum_all()?.to_scalar::<T>()?;
@@ -61,14 +53,16 @@ pub async fn cosine_similarity_vec<T: FloatType + WithDType>(a: &Vec<T>, b: &Vec
     Ok(sum_ab / (sum_a2 * sum_b2).sqrt())
 }
 
-pub async fn generate_embeddings(mut tokenizer: Tokenizer, model: BertModel, sentences: &[&str], normalize_embeddings: bool) -> anyhow::Result<Tensor> {
+pub async fn generate_embeddings(
+    mut tokenizer: Tokenizer,
+    model: BertModel,
+    sentences: &[&str],
+    normalize_embeddings: bool,
+) -> anyhow::Result<Tensor> {
     if let Some(pp) = tokenizer.get_padding_mut() {
         pp.strategy = tokenizers::PaddingStrategy::BatchLongest
     } else {
-        let pp = PaddingParams {
-            strategy: tokenizers::PaddingStrategy::BatchLongest,
-            ..Default::default()
-        };
+        let pp = PaddingParams { strategy: tokenizers::PaddingStrategy::BatchLongest, ..Default::default() };
         tokenizer.with_padding(Some(pp));
     }
     let tokens = tokenizer
@@ -106,14 +100,16 @@ pub async fn generate_embeddings(mut tokenizer: Tokenizer, model: BertModel, sen
 }
 
 /// Generate embeddings for a list of sentences, returning a vector of tensors.
-pub async fn generate_embeddings_for_sentences(mut tokenizer: Tokenizer, model: BertModel, sentences: &[&str], normalize_embeddings: bool) -> anyhow::Result<Vec<Tensor>> {
+pub async fn generate_embeddings_for_sentences(
+    mut tokenizer: Tokenizer,
+    model: BertModel,
+    sentences: &[&str],
+    normalize_embeddings: bool,
+) -> anyhow::Result<Vec<Tensor>> {
     if let Some(pp) = tokenizer.get_padding_mut() {
         pp.strategy = tokenizers::PaddingStrategy::BatchLongest
     } else {
-        let pp = PaddingParams {
-            strategy: tokenizers::PaddingStrategy::BatchLongest,
-            ..Default::default()
-        };
+        let pp = PaddingParams { strategy: tokenizers::PaddingStrategy::BatchLongest, ..Default::default() };
         tokenizer.with_padding(Some(pp));
     }
     let tokens = tokenizer
@@ -161,11 +157,16 @@ pub async fn generate_embeddings_for_sentences(mut tokenizer: Tokenizer, model: 
     Ok(embeddings_vec)
 }
 
-pub async fn generate_embedding(mut tokenizer: Tokenizer, model: &BertModel, prompt: &str, normalize_embedding: bool) -> anyhow::Result<Tensor> {
+pub async fn generate_embedding(
+    mut tokenizer: Tokenizer,
+    model: &BertModel,
+    prompt: &str,
+    normalize_embedding: bool,
+) -> anyhow::Result<Tensor> {
     let tokenizer = tokenizer
-            .with_padding(None)
-            .with_truncation(None)
-            .map_err(anyhow::Error::msg)?;
+        .with_padding(None)
+        .with_truncation(None)
+        .map_err(anyhow::Error::msg)?;
     let tokens = tokenizer
         .encode(prompt, true)
         .map_err(anyhow::Error::msg)?
@@ -184,12 +185,14 @@ pub async fn generate_embedding(mut tokenizer: Tokenizer, model: &BertModel, pro
 }
 
 /// Build a model and tokenizer from a model id, revision, and other options.
-pub fn build_model_and_tokenizer(model_id: &str, revision: &str, gpu: bool, use_pth: bool, approximate_gelu: bool) -> anyhow::Result<(BertModel, Tokenizer)> {
-    let device = if gpu {
-        Device::Cuda(CudaDevice)
-    } else {
-        Device::Cpu
-    };
+pub fn build_model_and_tokenizer(
+    model_id: &str,
+    revision: &str,
+    gpu: bool,
+    use_pth: bool,
+    approximate_gelu: bool,
+) -> anyhow::Result<(BertModel, Tokenizer)> {
+    let device = if gpu { Device::Cuda(CudaDevice) } else { Device::Cpu };
 
     let repo = Repo::with_revision(model_id.to_owned(), RepoType::Model, revision.to_owned());
     let (config_filename, tokenizer_filename, weights_filename) = {
@@ -262,7 +265,8 @@ mod tests {
         let gpu = false;
         let use_pth = false;
         let approximate_gelu = false;
-        let result: Result<(BertModel, Tokenizer), anyhow::Error> = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu);
+        let result: Result<(BertModel, Tokenizer), anyhow::Error> =
+            build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu);
         assert_eq!(result.is_ok(), true);
         Ok(())
     }
@@ -313,5 +317,4 @@ mod tests {
         assert_eq!(similarity, 1.0f64);
         Ok(())
     }
-
 }

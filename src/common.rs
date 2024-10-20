@@ -66,11 +66,19 @@ impl FromStr for PipelineError {
             Some("EmptyString") => Ok(PipelineError::EmptyString),
             Some("NoContent") => Ok(PipelineError::NoContent),
             Some("ParsingError") => {
-                let msg = caps.get(2).ok_or_else(|| anyhow::anyhow!("No match"))?.as_str().to_string();
+                let msg = caps
+                    .get(2)
+                    .ok_or_else(|| anyhow::anyhow!("No match"))?
+                    .as_str()
+                    .to_string();
                 Ok(PipelineError::ParsingError(msg))
             }
             Some("NetworkError") => {
-                let msg = caps.get(3).ok_or_else(|| anyhow::anyhow!("No match"))?.as_str().to_string();
+                let msg = caps
+                    .get(3)
+                    .ok_or_else(|| anyhow::anyhow!("No match"))?
+                    .as_str()
+                    .to_string();
                 Ok(PipelineError::NetworkError(msg))
             }
             _ => Err(anyhow::anyhow!("No match")),
@@ -116,7 +124,10 @@ impl NewsItem {
     pub fn from_item(channel: &str, item: &rss::Item) -> anyhow::Result<NewsItem> {
         let title = item.title().ok_or_else(|| anyhow::anyhow!("No title"))?.to_string();
         let link = item.link().ok_or_else(|| anyhow::anyhow!("No link"))?.to_string();
-        let description = item.description().ok_or_else(|| anyhow::anyhow!("No description"))?.to_string();
+        let description = item
+            .description()
+            .ok_or_else(|| anyhow::anyhow!("No description"))?
+            .to_string();
         let pub_date = item.pub_date().map(|date| date.to_string().replace("GMT", "+0000"));
         let categories = item
             .categories()
@@ -180,7 +191,7 @@ impl NewsItem {
             keywords: Some("Keyword1, Keyword2".to_string()),
             clean_content: Some("Content".to_string()),
             error: None,
-            relevance: relevance,
+            relevance,
         }
     }
 
@@ -201,7 +212,7 @@ impl NewsItem {
         // Helper function to process and add words to the BOW
         let mut add_to_bow = |text: &Option<String>| {
             if let Some(items) = text {
-                bow.insert(items.to_lowercase());  // Convert to lowercase for normalization
+                bow.insert(items.to_lowercase()); // Convert to lowercase for normalization
             }
         };
 
@@ -221,4 +232,3 @@ pub struct FeedbackRecord {
     pub title_embedding: Vec<f32>,
     pub bow_embedding: Vec<f32>,
 }
-

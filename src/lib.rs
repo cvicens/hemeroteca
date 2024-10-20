@@ -1,46 +1,49 @@
 //! Library that provides functions to read and parse RSS feeds
 
 pub mod common;
+pub mod embeddings;
 pub mod openai;
 pub mod relevance;
 pub mod storage;
-pub mod embeddings;
 
 // Re-export commonly used items in a prelude module
 pub mod prelude {
+    pub use crate::calculate_relevance_of_newsitem;
+    pub use crate::clean_content;
     pub use crate::common::ChannelType;
+    pub use crate::common::FeedbackRecord;
     pub use crate::common::NewsItem;
     pub use crate::common::Operator;
     pub use crate::common::PipelineError;
-    pub use crate::common::FeedbackRecord;
-    pub use crate::calculate_relevance_of_newsitem;
-    pub use crate::clean_content;
+    pub use crate::embeddings::{DEFAULT_MODEL_ID, DEFAULT_REVISION};
     pub use crate::fetch_news_items_opted_in;
     pub use crate::fill_news_item_content;
     pub use crate::fill_news_items_with_clean_contents;
-    pub use crate::get_channel_type;
-    pub use crate::generate_relevance_report;
-    pub use crate::log_report_to_file;
-    pub use crate::insert_news_items;
-    pub use crate::log_news_items_to_file;
-    pub use crate::log_news_items_to_db;
     pub use crate::generate_dossier_report;
     pub use crate::generate_feedback_records;
+    pub use crate::generate_relevance_report;
+    pub use crate::get_channel_type;
+    pub use crate::insert_news_items;
+    pub use crate::log_news_items_to_db;
+    pub use crate::log_news_items_to_file;
+    pub use crate::log_report_to_file;
     pub use crate::read_feed;
     pub use crate::read_urls;
+    pub use crate::storage::{
+        read_feedback_records_from_parquet, write_feedback_records_parquet, write_feedback_records_to_csv,
+    };
     pub use crate::top_k_news_items;
     pub use crate::update_news_items_with_relevance;
     pub use crate::update_news_items_with_relevance_top_k;
     pub use crate::update_relevance_of_news_items;
-    pub use crate::storage::{write_feedback_records_parquet, write_feedback_records_to_csv, read_feedback_records_from_parquet};
-    pub use crate::embeddings::{DEFAULT_MODEL_ID, DEFAULT_REVISION};
-    
 }
 
 use crate::relevance::calculate_relevance;
 use candle_core::Tensor;
 use common::{ChannelType, FeedbackRecord, NewsItem, Operator, PipelineError};
-use embeddings::{build_model_and_tokenizer, cosine_similarity, generate_embeddings, generate_embeddings_for_sentences};
+use embeddings::{
+    build_model_and_tokenizer, cosine_similarity, generate_embeddings, generate_embeddings_for_sentences,
+};
 
 use std::io::{BufRead, Cursor, Write};
 
@@ -114,9 +117,11 @@ pub async fn fetch_news_items_opted_in(
         let handle = tokio::spawn(async move {
             let channel = read_feed(&url).await;
             // Map the result to an option and log the error if any
-            channel.map_err(|e| {
-                log::error!("Could not read the feed from {}. ERROR: {}", url, e);
-            }).ok()
+            channel
+                .map_err(|e| {
+                    log::error!("Could not read the feed from {}. ERROR: {}", url, e);
+                })
+                .ok()
         });
         handles.push(handle);
     }
@@ -131,7 +136,9 @@ pub async fn fetch_news_items_opted_in(
         .iter()
         .filter_map(|channel| {
             // Maps option channel to an option tuple of the title and the items
-            channel.as_ref().map(|channel| (channel.title(), channel.items().to_vec()))
+            channel
+                .as_ref()
+                .map(|channel| (channel.title(), channel.items().to_vec()))
         })
         .collect();
 
@@ -414,7 +421,7 @@ pub async fn fill_news_item_content(news_item: &mut NewsItem) {
 }
 
 /// Function that returns the top k news items based on their relevance
-pub async fn top_k_news_items(top_k: u8, news_items:&[NewsItem]) -> Vec<NewsItem> {
+pub async fn top_k_news_items(top_k: u8, news_items: &[NewsItem]) -> Vec<NewsItem> {
     // The top k news items are the ones with the highest relevance
     let mut handles = Vec::new();
 
@@ -461,13 +468,13 @@ pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
 
     // Write table of contents
     writeln!(file, "# Table of Contents").unwrap();
-    for (i,item) in news_items.iter().enumerate() {
+    for (i, item) in news_items.iter().enumerate() {
         writeln!(file, "{}. [{}]({})", i + 1, item.title, generate_anchor(&item.title)).unwrap();
     }
     writeln!(file).unwrap();
 
     for item in news_items {
-        writeln!(file,"---").unwrap();
+        writeln!(file, "---").unwrap();
         writeln!(file, "# {}", item.title).unwrap();
         writeln!(file, "## Data").unwrap();
         writeln!(file, "- **Channel:** {}", item.channel).unwrap();
@@ -477,7 +484,12 @@ pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
         writeln!(file, "- **Categories:** {:?}", item.categories).unwrap();
         writeln!(file, "- **Keywords:** {:?}", item.keywords).unwrap();
         writeln!(file, "- **Error:** {:?}", item.error).unwrap();
-        writeln!(file, "## Description\n{}", &item.description.chars().take(50).collect::<String>()).unwrap();
+        writeln!(
+            file,
+            "## Description\n{}",
+            &item.description.chars().take(50).collect::<String>()
+        )
+        .unwrap();
         match &item.clean_content {
             Some(clean_content) => {
                 writeln!(file, "## Clean Content \n{}", clean_content).unwrap();
@@ -487,7 +499,6 @@ pub fn log_news_items_to_file(news_items: &[NewsItem], file: &str) {
             }
         }
         writeln!(file).unwrap();
-        
     }
 }
 
@@ -512,7 +523,7 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
         let channel = item.channel.clone();
 
         let channel_relevance = relevance_per_channel.entry(channel).or_insert((0.0, 0));
-        channel_relevance.0 += relevance as f64;
+        channel_relevance.0 += relevance;
         channel_relevance.1 += 1;
     }
 
@@ -527,7 +538,13 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
     // Write the relevance per channel
     report.push_str("## Relevance per Channel\n\n");
     for (channel, relevance) in relevance_per_channel.iter() {
-        report.push_str(&format!("- **{}:** Items: {} Total: {} Average: {}\n", channel, relevance.1, relevance.0, relevance.0/relevance.1 as f64));
+        report.push_str(&format!(
+            "- **{}:** Items: {} Total: {} Average: {}\n",
+            channel,
+            relevance.1,
+            relevance.0,
+            relevance.0 / relevance.1 as f64
+        ));
     }
     report.push('\n');
 
@@ -543,10 +560,7 @@ pub fn generate_relevance_report(news_items: &[NewsItem]) -> String {
 
 /// Function that writes a relevance report to a file and returns a Result
 pub async fn log_relevance_report_to_file(report: &str, file: &str) -> anyhow::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file)?;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
 
     writeln!(file, "{}", report)?;
 
@@ -569,10 +583,7 @@ fn generate_anchor(title: &str) -> String {
 
 /// Function that writes a report (&str) to a file and returns a Result
 pub async fn log_report_to_file(report: &str, file: &str) -> anyhow::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(file)?;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
 
     writeln!(file, "{}", report)?;
 
@@ -588,8 +599,13 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
 
     // Write table of contents
     report.push_str("## Table of Contents\n");
-    for (i,item) in news_items.iter().enumerate() {
-        report.push_str(&format!("{}. [{}]({})\n", i + 1, item.title, generate_anchor(&item.title)));
+    for (i, item) in news_items.iter().enumerate() {
+        report.push_str(&format!(
+            "{}. [{}]({})\n",
+            i + 1,
+            item.title,
+            generate_anchor(&item.title)
+        ));
     }
     report.push('\n');
 
@@ -616,7 +632,7 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
         report.push_str(&format!("- **Keywords:** {:?}\n", item.keywords));
         report.push_str(&format!("- **Error:** {:?}\n", item.error));
         report.push('\n');
-        
+
         // report.push_str("#### Description\n{}", &item.description);
         // report.push_str(file);
 
@@ -629,7 +645,6 @@ pub fn generate_dossier_report(news_items: &Vec<NewsItem>) -> String {
             }
         }
         report.push('\n');
-        
     }
 
     report
@@ -669,9 +684,7 @@ pub fn insert_news_items(news_items: &Vec<NewsItem>, connection: &sqlite::Connec
 }
 
 /// Function that given a vector of NewsItems fills the clean_content field of all of them
-pub async fn fill_news_items_with_clean_contents(
-    news_items: &mut Vec<NewsItem>,
-) -> Option<Vec<NewsItem>> {
+pub async fn fill_news_items_with_clean_contents(news_items: &mut Vec<NewsItem>) -> Option<Vec<NewsItem>> {
     let mut clean_news_items = Vec::new();
 
     // Calculate the number of tasks to spawn
@@ -693,7 +706,6 @@ pub async fn fill_news_items_with_clean_contents(
     for handle in handles {
         clean_news_items.push(handle.await.unwrap());
     }
-    
 
     if clean_news_items.is_empty() {
         None
@@ -705,9 +717,7 @@ pub async fn fill_news_items_with_clean_contents(
 /// Function that given a vector of NewsItems and the max number of threads to
 /// spawn, calculates the relevance of each NewsItem and returns the updated
 /// vector of NewsItems
-pub async fn update_news_items_with_relevance(
-    news_items: &mut Vec<NewsItem>,
-) -> Option<Vec<NewsItem>> {
+pub async fn update_news_items_with_relevance(news_items: &mut Vec<NewsItem>) -> Option<Vec<NewsItem>> {
     log::info!("Updating relevance of {} news items", news_items.len());
     let mut updated_news_items = Vec::new();
 
@@ -742,10 +752,7 @@ pub async fn update_news_items_with_relevance(
 
 // Function that updates the news items with the calculated relevance and
 // returns the top k items
-pub async fn update_news_items_with_relevance_top_k(
-    items: &mut Vec<NewsItem>,
-    k: usize,
-) -> Vec<NewsItem> {
+pub async fn update_news_items_with_relevance_top_k(items: &mut Vec<NewsItem>, k: usize) -> Vec<NewsItem> {
     // Start time
     let start = std::time::Instant::now();
 
@@ -780,16 +787,16 @@ pub async fn update_news_items_with_relevance_top_k(
 }
 
 /// Function given a slice of NewsItems return a Vec of FeedbackRecords
-/// 
+///
 /// Example:
-/// 
+///
 /// ```rust
 /// use hemeroteca::generate_feedback_records;
 /// use hemeroteca::prelude::NewsItem;
-/// 
+///
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
-/// 
+///
 /// let news_item_1 = NewsItem {
 ///     error: None,
 ///     creators: "Creator".to_string(),
@@ -824,15 +831,19 @@ pub async fn update_news_items_with_relevance_top_k(
 /// let normalize_embedding = false;
 /// let approximate_gelu = false;
 /// let feedback_records = generate_feedback_records(&news_items, &model_id, &revision, gpu, use_pth, normalize_embedding, approximate_gelu).await.unwrap();
-/// 
+///
 /// assert_eq!(feedback_records.len(), 2);
 /// # }
 /// ```
 pub async fn generate_feedback_records(
-    news_items:&[NewsItem], 
-    model_id: &str, model_revision: &str, 
-    gpu: bool, use_pth: bool, normalize_embedding: bool, approximate_gelu: bool) -> anyhow::Result<Vec<FeedbackRecord>> {
-    
+    news_items: &[NewsItem],
+    model_id: &str,
+    model_revision: &str,
+    gpu: bool,
+    use_pth: bool,
+    normalize_embedding: bool,
+    approximate_gelu: bool,
+) -> anyhow::Result<Vec<FeedbackRecord>> {
     // Spawn tokio task for each NewsItem to generate embeddings for title and keywords+categories
     let mut handles = Vec::new();
     for item in news_items.iter() {
@@ -852,22 +863,18 @@ pub async fn generate_feedback_records(
             let bow = item.get_bow();
             let sentences = vec![item.title.as_str(), bow.as_str()];
             let embeddings = generate_embeddings(tokenizer, model, &sentences, normalize_embedding).await?;
-            
+
             // Check that the embeddings have the correct dimensions
             assert!(embeddings.dims()[0] == 2);
 
             // Extract the title and keywords+categories embeddings
-            let title_embedding: Vec<f32>  = embeddings.narrow(0, 0, 1)?.to_vec2()?[0].clone();
+            let title_embedding: Vec<f32> = embeddings.narrow(0, 0, 1)?.to_vec2()?[0].clone();
             log::trace!("title_embedding: {:?}", title_embedding);
-            
-            let bow_embedding: Vec<f32>  = embeddings.narrow(0, 1, 1)?.to_vec2()?[0].clone();
+
+            let bow_embedding: Vec<f32> = embeddings.narrow(0, 1, 1)?.to_vec2()?[0].clone();
             log::trace!("bow_embedding: {:?}", bow_embedding);
-            
-            Ok(FeedbackRecord {
-                news_item: item,
-                title_embedding: title_embedding,
-                bow_embedding,
-            })
+
+            Ok(FeedbackRecord { news_item: item, title_embedding, bow_embedding })
         });
         handles.push(handle);
     }
@@ -881,12 +888,11 @@ pub async fn generate_feedback_records(
     }
 
     Ok(feedback_records)
-
 }
 
 /// Functon that updates the relevance of a slice of NewsItems given a slice of FeedbackRecords
 pub async fn update_relevance_of_news_items(
-    news_items: &mut [NewsItem], 
+    news_items: &mut [NewsItem],
     feedback_records: &[FeedbackRecord],
     similarity_threshold: f32,
     model_id: &str,
@@ -894,8 +900,8 @@ pub async fn update_relevance_of_news_items(
     gpu: bool,
     use_pth: bool,
     approximate_gelu: bool,
-    normalize_embedding: bool
-    ) -> anyhow::Result<()> {
+    normalize_embedding: bool,
+) -> anyhow::Result<()> {
     log::info!("Updating relevance of {} news items", news_items.len());
     log::info!("Using {} of feedback records", feedback_records.len());
 
@@ -914,7 +920,18 @@ pub async fn update_relevance_of_news_items(
         let feedback_records = feedback_records.to_vec();
         // Spawn a blocking task for each item to calculate the relevance
         let handle: tokio::task::JoinHandle<Result<f64, anyhow::Error>> = tokio::spawn(async move {
-            let relevance = calculate_relevance_of_newsitem(&news_item, &feedback_records, similarity_threshold, &model_id, &revision, gpu, use_pth, approximate_gelu, normalize_embedding).await?;
+            let relevance = calculate_relevance_of_newsitem(
+                &news_item,
+                &feedback_records,
+                similarity_threshold,
+                &model_id,
+                &revision,
+                gpu,
+                use_pth,
+                approximate_gelu,
+                normalize_embedding,
+            )
+            .await?;
             Ok(relevance)
         });
         handles.push(handle);
@@ -924,7 +941,11 @@ pub async fn update_relevance_of_news_items(
     for (i, handle) in handles.into_iter().enumerate() {
         if let Ok(result) = handle.await {
             news_items[i].relevance = Some(result?);
-            log::debug!("Relevance of {} is {}", news_items[i].title, news_items[i].relevance.unwrap());
+            log::debug!(
+                "Relevance of {} is {}",
+                news_items[i].title,
+                news_items[i].relevance.unwrap()
+            );
         }
     }
 
@@ -933,7 +954,7 @@ pub async fn update_relevance_of_news_items(
 
 /// Function that calculates the relevance of a NewsItem by similarity given a slice of FeedbackRecords
 pub async fn calculate_relevance_of_newsitem(
-    news_item: &NewsItem, 
+    news_item: &NewsItem,
     feedback_records: &[FeedbackRecord],
     similarity_threshold: f32,
     model_id: &str,
@@ -941,54 +962,73 @@ pub async fn calculate_relevance_of_newsitem(
     gpu: bool,
     use_pth: bool,
     approximate_gelu: bool,
-    normalize_embedding: bool
-    ) -> anyhow::Result<f64> {
+    normalize_embedding: bool,
+) -> anyhow::Result<f64> {
     // Start time
     let start = std::time::Instant::now();
 
     // Calculate embedding for the title of the news item
-    let (model, tokenizer) = build_model_and_tokenizer(&model_id, &revision, gpu, use_pth, approximate_gelu)?;
-    let embeddings = generate_embeddings_for_sentences(tokenizer, model, &[&news_item.title, &news_item.get_bow()], normalize_embedding).await?;
+    let (model, tokenizer) = build_model_and_tokenizer(model_id, revision, gpu, use_pth, approximate_gelu)?;
+    let embeddings = generate_embeddings_for_sentences(
+        tokenizer,
+        model,
+        &[&news_item.title, &news_item.get_bow()],
+        normalize_embedding,
+    )
+    .await?;
 
     // Calculate relevance with regards to the join of keywords and categories
-    let title_relevance = calculate_relevance_by_cosine_similarity(
-        &embeddings[0],
-        feedback_records,
-        similarity_threshold,
-        |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
-    let bow_relevance = calculate_relevance_by_cosine_similarity(
-        &embeddings[1], 
-        feedback_records,
-        similarity_threshold,
-        |record| (record.title_embedding, record.news_item.relevance.unwrap_or_default())).await?;
+    let title_relevance =
+        calculate_relevance_by_cosine_similarity(&embeddings[0], feedback_records, similarity_threshold, |record| {
+            (record.title_embedding, record.news_item.relevance.unwrap_or_default())
+        })
+        .await?;
+    let bow_relevance =
+        calculate_relevance_by_cosine_similarity(&embeddings[1], feedback_records, similarity_threshold, |record| {
+            (record.title_embedding, record.news_item.relevance.unwrap_or_default())
+        })
+        .await?;
 
     let elapsed_time = start.elapsed().as_secs_f64();
     log::debug!("Relevance calculated in {} secs", elapsed_time);
-    
-    // Return the maximum relevance
-    Ok(title_relevance.max(bow_relevance))
+
+    // Reduce the relevance 10% for each day that has passed since the publication date to a maximum of 30%
+    let mut relevance = title_relevance.max(bow_relevance);
+    if let Some(pub_date) = news_item.pub_date.clone() {
+        let pub_date = chrono::DateTime::parse_from_rfc2822(&pub_date)
+            .unwrap()
+            .with_timezone(&chrono::Local);
+        let days = (chrono::Local::now() - pub_date).num_days();
+        let decay = 0.1 * days as f64;
+        relevance *= (1.0 - decay).max(0.7);
+    }
+
+    // Return the relevance
+    Ok(relevance)
 }
 
 /// Function that calculates the relevance of a NewsItem by similarity to a slice of FeedbackRecords
 async fn calculate_relevance_by_cosine_similarity(
-    embedding: &Tensor, 
+    embedding: &Tensor,
     feedback_records: &[FeedbackRecord],
     threshold: f32,
-    extractor: fn(FeedbackRecord) -> (Vec<f32>, f64)) -> anyhow::Result<f64> {
+    extractor: fn(FeedbackRecord) -> (Vec<f32>, f64),
+) -> anyhow::Result<f64> {
     // Iterate over the feedback records, spawn a tokio task for each record to calculate the cosine similarity
     let mut tasks = Vec::new();
     for feedback_record in feedback_records {
         let record_embedding_with_relevance = extractor(feedback_record.clone());
         let task: tokio::task::JoinHandle<Result<(f32, f64), _>> = tokio::spawn({
             let embedding = embedding.clone();
-            let record_embedding_with_relevance = record_embedding_with_relevance.clone();  // Move the data needed
-            // Check that the embeddings have the correct dimensions
+            let record_embedding_with_relevance = record_embedding_with_relevance.clone(); // Move the data needed
+                                                                                           // Check that the embeddings have the correct dimensions
             let embedding_length = embedding.dims()[1];
             let record_embedding_length = record_embedding_with_relevance.0.len();
             assert!(embedding_length == record_embedding_length);
             async move {
                 let device = embedding.device();
-                let record_embedding = Tensor::new(&record_embedding_with_relevance.0[..], &device)?.reshape(&[1, record_embedding_length])?;
+                let record_embedding = Tensor::new(&record_embedding_with_relevance.0[..], device)?
+                    .reshape(&[1, record_embedding_length])?;
                 let relevance = record_embedding_with_relevance.1;
                 let similarity = cosine_similarity::<f32>(&embedding, &record_embedding).await?;
                 Ok::<(f32, f64), anyhow::Error>((similarity, relevance))
@@ -1004,16 +1044,17 @@ async fn calculate_relevance_by_cosine_similarity(
     }
 
     // Filter out tuples which similarity value is below threshold
-    let mut similarities: Vec<(f32, f64)> = results.into_iter()  // Turn the original vector into an iterator
-    .filter_map(|item: Result<(f32, f64), _>| {
-        if let Ok((similarity, relevance)) = item {
-            if similarity > threshold {
-                return Some((similarity, relevance));  // Keep this item
+    let mut similarities: Vec<(f32, f64)> = results
+        .into_iter() // Turn the original vector into an iterator
+        .filter_map(|item: Result<(f32, f64), _>| {
+            if let Ok((similarity, relevance)) = item {
+                if similarity > threshold {
+                    return Some((similarity, relevance)); // Keep this item
+                }
             }
-        }
-        None  // Discard the item
-    })
-    .collect();
+            None // Discard the item
+        })
+        .collect();
 
     // Order the similarities by similarity
     similarities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -1031,9 +1072,6 @@ async fn calculate_relevance_by_cosine_similarity(
             Ok(avg_relevance)
         }
     }
-
-    
-    
 }
 
 #[cfg(test)]
@@ -1337,10 +1375,10 @@ mod tests {
             false,
             false,
             false,
-        ).await?;
+        )
+        .await?;
 
         assert_eq!(relevance, 0.0);
         Ok(())
     }
-
 }
